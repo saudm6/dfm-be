@@ -48,6 +48,12 @@ func TestNewQuote(t *testing.T) {
 			q.BidSize, q.AskSize, q.Volume, q.Trades = 0, 0, 0, 0
 			q.LastTradeAt = time.Time{}
 		}},
+		{name: "trades without a last price", edit: func(q *domain.Quote) { q.Last = decimal.Zero },
+			wantErr: `domain: invalid quote: last is zero but trades is 470`},
+		{name: "volume without a last price", edit: func(q *domain.Quote) { q.Last, q.Trades = decimal.Zero, 0 },
+			wantErr: `domain: invalid quote: last is zero but volume is 1122245`},
+		{name: "value without a last price", edit: func(q *domain.Quote) { q.Last, q.Trades, q.Volume = decimal.Zero, 0, 0 },
+			wantErr: `domain: invalid quote: last is zero but value is 5074031.27`},
 		{name: "zero value", edit: func(q *domain.Quote) { *q = domain.Quote{} },
 			wantErr: `domain: invalid quote: symbol "" is not a trading code`},
 		{name: "lower-case symbol", edit: func(q *domain.Quote) { q.Symbol = "airarabia" },

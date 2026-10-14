@@ -9,7 +9,8 @@ import (
 // Quote is the latest market state of one instrument.
 //
 // A zero price or size means the feed did not provide it, for example no bid
-// before the open. LastTradeAt is zero when there has been no trade.
+// before the open. LastTradeAt is zero when there has been no trade. Last may
+// be zero only while Trades, Volume, and Value are all zero.
 type Quote struct {
 	Symbol            Symbol
 	Last, Bid, Ask    decimal.Decimal
@@ -54,6 +55,16 @@ func NewQuote(q Quote) (Quote, error) {
 	} {
 		if n.v < 0 {
 			return fail("%s %d is negative", n.name, n.v)
+		}
+	}
+	if q.Last.IsZero() {
+		switch {
+		case q.Trades > 0:
+			return fail("last is zero but trades is %d", q.Trades)
+		case q.Volume > 0:
+			return fail("last is zero but volume is %d", q.Volume)
+		case q.Value.IsPositive():
+			return fail("last is zero but value is %s", q.Value)
 		}
 	}
 	return q, nil

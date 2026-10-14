@@ -34,6 +34,14 @@ func (c InstrumentClass) Valid() bool {
 	return false
 }
 
+// MarshalText returns c as text.
+func (c InstrumentClass) MarshalText() ([]byte, error) { return []byte(c), nil }
+
+// UnmarshalText sets c to ParseInstrumentClass(text), so decoding rejects unknown values.
+func (c *InstrumentClass) UnmarshalText(text []byte) error {
+	return unmarshalText(c, ParseInstrumentClass, text)
+}
+
 // InstrumentStatus is whether an instrument can trade.
 type InstrumentStatus string
 
@@ -58,6 +66,14 @@ func (s InstrumentStatus) Valid() bool {
 		return true
 	}
 	return false
+}
+
+// MarshalText returns s as text.
+func (s InstrumentStatus) MarshalText() ([]byte, error) { return []byte(s), nil }
+
+// UnmarshalText sets s to ParseInstrumentStatus(text), so decoding rejects unknown values.
+func (s *InstrumentStatus) UnmarshalText(text []byte) error {
+	return unmarshalText(s, ParseInstrumentStatus, text)
 }
 
 // Instrument is one row of the security master.

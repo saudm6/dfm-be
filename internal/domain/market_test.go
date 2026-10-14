@@ -1,6 +1,8 @@
 package domain_test
 
 import (
+	"encoding"
+	"encoding/json"
 	"errors"
 	"go/parser"
 	"go/token"
@@ -91,6 +93,140 @@ func wrap[T ~string](parse func(string) (T, error)) func(string) (string, error)
 	return func(s string) (string, error) {
 		v, err := parse(s)
 		return string(v), err
+	}
+}
+
+func TestEnumTextUnmarshal(t *testing.T) {
+	tests := []struct {
+		name    string
+		decode  func(string) (string, error)
+		in      string
+		want    string
+		wantErr string
+	}{
+		{name: "exchange", decode: unmarshalText[domain.Exchange], in: "DFM", want: "DFM"},
+		{name: "exchange unknown", decode: unmarshalText[domain.Exchange], in: "ADX", wantErr: `domain: invalid exchange: unknown value "ADX"`},
+		{name: "currency", decode: unmarshalText[domain.Currency], in: "AED", want: "AED"},
+		{name: "currency unknown", decode: unmarshalText[domain.Currency], in: "aed", wantErr: `domain: invalid currency: unknown value "aed"`},
+		{name: "freshness", decode: unmarshalText[domain.Freshness], in: "eod", want: "eod"},
+		{name: "freshness unknown", decode: unmarshalText[domain.Freshness], in: "live", wantErr: `domain: invalid freshness: unknown value "live"`},
+		{name: "freshness empty", decode: unmarshalText[domain.Freshness], in: "", wantErr: `domain: invalid freshness: unknown value ""`},
+		{name: "source", decode: unmarshalText[domain.Source], in: "dfm-mw", want: "dfm-mw"},
+		{name: "source unknown", decode: unmarshalText[domain.Source], in: "yahoo", wantErr: `domain: invalid source: unknown value "yahoo"`},
+		{name: "interval", decode: unmarshalText[domain.Interval], in: "1d", want: "1d"},
+		{name: "interval unknown", decode: unmarshalText[domain.Interval], in: "5m", wantErr: `domain: invalid interval: unknown value "5m"`},
+		{name: "class", decode: unmarshalText[domain.InstrumentClass], in: "reit", want: "reit"},
+		{name: "class unknown", decode: unmarshalText[domain.InstrumentClass], in: "Equities", wantErr: `domain: invalid instrument class: unknown value "Equities"`},
+		{name: "status", decode: unmarshalText[domain.InstrumentStatus], in: "suspended", want: "suspended"},
+		{name: "status unknown", decode: unmarshalText[domain.InstrumentStatus], in: "A", wantErr: `domain: invalid instrument status: unknown value "A"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.decode(tt.in)
+			checkErr(t, err, tt.wantErr)
+			if got != tt.want {
+				t.Errorf("UnmarshalText(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func unmarshalText[T ~string, P interface {
+	*T
+	encoding.TextUnmarshaler
+}](s string) (string, error) {
+	var v T
+	err := P(&v).UnmarshalText([]byte(s))
+	return string(v), err
+}
+
+func TestEnumTextMarshal(t *testing.T) {
+	tests := []struct {
+		name string
+		v    any
+		want string
+	}{
+		{name: "exchange", v: domain.ExchangeDFM, want: "DFM"},
+		{name: "currency", v: domain.CurrencyAED, want: "AED"},
+		{name: "freshness", v: domain.EndOfDay, want: "eod"},
+		{name: "source", v: domain.SourceSelfRecorded, want: "self-recorded"},
+		{name: "interval", v: domain.OneDay, want: "1d"},
+		{name: "class", v: domain.ClassETF, want: "etf"},
+		{name: "status", v: domain.StatusMatured, want: "matured"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, ok := tt.v.(encoding.TextMarshaler)
+			if !ok {
+				t.Fatalf("%T does not implement encoding.TextMarshaler", tt.v)
+			}
+			got, err := m.MarshalText()
+			if err != nil {
+				t.Fatalf("MarshalText() error = %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("MarshalText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+type enums struct {
+	Exchange  domain.Exchange
+	Currency  domain.Currency
+	Freshness domain.Freshness
+	Source    domain.Source
+	Interval  domain.Interval
+	Class     domain.InstrumentClass
+	Status    domain.InstrumentStatus
+}
+
+func TestEnumJSON(t *testing.T) {
+	const valid = `{"Exchange":"NASDAQ_DUBAI","Currency":"USD","Freshness":"realtime","Source":"ibkr","Interval":"1m","Class":"sukuk","Status":"listed"}`
+	want := enums{
+		Exchange:  domain.ExchangeNasdaqDubai,
+		Currency:  domain.CurrencyUSD,
+		Freshness: domain.RealTime,
+		Source:    domain.SourceIBKR,
+		Interval:  domain.OneMinute,
+		Class:     domain.ClassSukuk,
+		Status:    domain.StatusListed,
+	}
+	var got enums
+	if err := json.Unmarshal([]byte(valid), &got); err != nil {
+		t.Fatalf("Unmarshal(valid) error = %v", err)
+	}
+	if got != want {
+		t.Errorf("Unmarshal(valid) = %+v, want %+v", got, want)
+	}
+	out, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal error = %v", err)
+	}
+	if string(out) != valid {
+		t.Errorf("Marshal = %s, want %s", out, valid)
+	}
+
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{name: "exchange", in: `{"Exchange":"ADX"}`},
+		{name: "currency", in: `{"Currency":"EUR"}`},
+		{name: "freshness", in: `{"Freshness":"live"}`},
+		{name: "source", in: `{"Source":"yahoo"}`},
+		{name: "interval", in: `{"Interval":"5m"}`},
+		{name: "class", in: `{"Class":"Equities"}`},
+		{name: "status", in: `{"Status":"A"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var v enums
+			err := json.Unmarshal([]byte(tt.in), &v)
+			if !errors.Is(err, domain.ErrInvalid) {
+				t.Errorf("Unmarshal(%s) error = %v, want ErrInvalid", tt.in, err)
+			}
+		})
 	}
 }
 

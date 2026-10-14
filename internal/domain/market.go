@@ -61,6 +61,12 @@ func (e Exchange) Valid() bool {
 	return false
 }
 
+// MarshalText returns e as text.
+func (e Exchange) MarshalText() ([]byte, error) { return []byte(e), nil }
+
+// UnmarshalText sets e to ParseExchange(text), so decoding rejects unknown values.
+func (e *Exchange) UnmarshalText(text []byte) error { return unmarshalText(e, ParseExchange, text) }
+
 // Currency is the ISO 4217 code an instrument trades in.
 type Currency string
 
@@ -81,6 +87,12 @@ func (c Currency) Valid() bool {
 	}
 	return false
 }
+
+// MarshalText returns c as text.
+func (c Currency) MarshalText() ([]byte, error) { return []byte(c), nil }
+
+// UnmarshalText sets c to ParseCurrency(text), so decoding rejects unknown values.
+func (c *Currency) UnmarshalText(text []byte) error { return unmarshalText(c, ParseCurrency, text) }
 
 // Freshness says how old a price can be when it is shown.
 type Freshness string
@@ -104,6 +116,12 @@ func (f Freshness) Valid() bool {
 	}
 	return false
 }
+
+// MarshalText returns f as text.
+func (f Freshness) MarshalText() ([]byte, error) { return []byte(f), nil }
+
+// UnmarshalText sets f to ParseFreshness(text), so decoding rejects unknown values.
+func (f *Freshness) UnmarshalText(text []byte) error { return unmarshalText(f, ParseFreshness, text) }
 
 // Source is the feed a price came from.
 type Source string
@@ -129,6 +147,12 @@ func (s Source) Valid() bool {
 	return false
 }
 
+// MarshalText returns s as text.
+func (s Source) MarshalText() ([]byte, error) { return []byte(s), nil }
+
+// UnmarshalText sets s to ParseSource(text), so decoding rejects unknown values.
+func (s *Source) UnmarshalText(text []byte) error { return unmarshalText(s, ParseSource, text) }
+
 // Interval is the period one Bar covers.
 type Interval string
 
@@ -150,6 +174,12 @@ func (i Interval) Valid() bool {
 	return false
 }
 
+// MarshalText returns i as text.
+func (i Interval) MarshalText() ([]byte, error) { return []byte(i), nil }
+
+// UnmarshalText sets i to ParseInterval(text), so decoding rejects unknown values.
+func (i *Interval) UnmarshalText(text []byte) error { return unmarshalText(i, ParseInterval, text) }
+
 type enum interface {
 	~string
 	Valid() bool
@@ -162,4 +192,13 @@ func parseEnum[T enum](kind, s string) (T, error) {
 		return zero, invalidf(kind, "unknown value %q", s)
 	}
 	return v, nil
+}
+
+func unmarshalText[T any](dst *T, parse func(string) (T, error), text []byte) error {
+	v, err := parse(string(text))
+	if err != nil {
+		return err
+	}
+	*dst = v
+	return nil
 }
