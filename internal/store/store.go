@@ -35,7 +35,7 @@ func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 // already current.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]int64, error) {
 	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
 	if err != nil {
 		return nil, fmt.Errorf("store: load migrations: %w", err)
