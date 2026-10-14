@@ -1,0 +1,146 @@
+package domain_test
+
+import (
+	"errors"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/saudm6/dfm-be/internal/domain"
+)
+
+func TestParseSymbol(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    domain.Symbol
+		wantErr string
+	}{
+		{in: "EMAAR", want: "EMAAR"},
+		{in: " emaar ", want: "EMAAR"},
+		{in: "NBD GULF", want: "NBD GULF"},
+		{in: "TAKAFUL-EM", want: "TAKAFUL-EM"},
+		{in: "SALAM_BAH", want: "SALAM_BAH"},
+		{in: "EBIUHPRP1USD", want: "EBIUHPRP1USD"},
+		{in: "", wantErr: `domain: invalid symbol: "" is not a trading code`},
+		{in: "-EMAAR", wantErr: `domain: invalid symbol: "-EMAAR" is not a trading code`},
+		{in: "EMAAR!", wantErr: `domain: invalid symbol: "EMAAR!" is not a trading code`},
+		{in: "ABCDEFGHIJKLMNOPQ", wantErr: `domain: invalid symbol: "ABCDEFGHIJKLMNOPQ" is not a trading code`},
+		{in: "إعمار", wantErr: `domain: invalid symbol: "إعمار" is not a trading code`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := domain.ParseSymbol(tt.in)
+			checkErr(t, err, tt.wantErr)
+			if got != tt.want {
+				t.Errorf("ParseSymbol(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseEnums(t *testing.T) {
+	tests := []struct {
+		name    string
+		parse   func(string) (string, error)
+		in      string
+		want    string
+		wantErr string
+	}{
+		{name: "exchange DFM", parse: wrap(domain.ParseExchange), in: "DFM", want: "DFM"},
+		{name: "exchange Nasdaq Dubai", parse: wrap(domain.ParseExchange), in: "NASDAQ_DUBAI", want: "NASDAQ_DUBAI"},
+		{name: "exchange unknown", parse: wrap(domain.ParseExchange), in: "ADX", wantErr: `domain: invalid exchange: unknown value "ADX"`},
+		{name: "currency AED", parse: wrap(domain.ParseCurrency), in: "AED", want: "AED"},
+		{name: "currency USD", parse: wrap(domain.ParseCurrency), in: "USD", want: "USD"},
+		{name: "currency unknown", parse: wrap(domain.ParseCurrency), in: "aed", wantErr: `domain: invalid currency: unknown value "aed"`},
+		{name: "freshness realtime", parse: wrap(domain.ParseFreshness), in: "realtime", want: "realtime"},
+		{name: "freshness delayed", parse: wrap(domain.ParseFreshness), in: "delayed", want: "delayed"},
+		{name: "freshness eod", parse: wrap(domain.ParseFreshness), in: "eod", want: "eod"},
+		{name: "freshness unknown", parse: wrap(domain.ParseFreshness), in: "live", wantErr: `domain: invalid freshness: unknown value "live"`},
+		{name: "freshness empty", parse: wrap(domain.ParseFreshness), in: "", wantErr: `domain: invalid freshness: unknown value ""`},
+		{name: "source ibkr", parse: wrap(domain.ParseSource), in: "ibkr", want: "ibkr"},
+		{name: "source dfm-mw", parse: wrap(domain.ParseSource), in: "dfm-mw", want: "dfm-mw"},
+		{name: "source dfm-history", parse: wrap(domain.ParseSource), in: "dfm-history", want: "dfm-history"},
+		{name: "source self-recorded", parse: wrap(domain.ParseSource), in: "self-recorded", want: "self-recorded"},
+		{name: "source unknown", parse: wrap(domain.ParseSource), in: "yahoo", wantErr: `domain: invalid source: unknown value "yahoo"`},
+		{name: "interval 1m", parse: wrap(domain.ParseInterval), in: "1m", want: "1m"},
+		{name: "interval 1d", parse: wrap(domain.ParseInterval), in: "1d", want: "1d"},
+		{name: "interval unknown", parse: wrap(domain.ParseInterval), in: "5m", wantErr: `domain: invalid interval: unknown value "5m"`},
+		{name: "class equity", parse: wrap(domain.ParseInstrumentClass), in: "equity", want: "equity"},
+		{name: "class sukuk", parse: wrap(domain.ParseInstrumentClass), in: "sukuk", want: "sukuk"},
+		{name: "class unknown", parse: wrap(domain.ParseInstrumentClass), in: "Equities", wantErr: `domain: invalid instrument class: unknown value "Equities"`},
+		{name: "status listed", parse: wrap(domain.ParseInstrumentStatus), in: "listed", want: "listed"},
+		{name: "status matured", parse: wrap(domain.ParseInstrumentStatus), in: "matured", want: "matured"},
+		{name: "status unknown", parse: wrap(domain.ParseInstrumentStatus), in: "A", wantErr: `domain: invalid instrument status: unknown value "A"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.parse(tt.in)
+			checkErr(t, err, tt.wantErr)
+			if got != tt.want {
+				t.Errorf("parse(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func wrap[T ~string](parse func(string) (T, error)) func(string) (string, error) {
+	return func(s string) (string, error) {
+		v, err := parse(s)
+		return string(v), err
+	}
+}
+
+func TestImportsOnlyStdlibAndDecimal(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imports []string
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(imports, path) {
+				imports = append(imports, path)
+			}
+		}
+	}
+	slices.Sort(imports)
+	want := []string{"errors", "fmt", "github.com/shopspring/decimal", "strings", "time"}
+	if !slices.Equal(imports, want) {
+		t.Errorf("imports = %q, want %q", imports, want)
+	}
+}
+
+func checkErr(t *testing.T, err error, want string) {
+	t.Helper()
+	if want == "" {
+		if err != nil {
+			t.Fatalf("error = %v, want nil", err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("error = nil, want %q", want)
+	}
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, domain.ErrInvalid) {
+		t.Errorf("errors.Is(%v, ErrInvalid) = false, want true", err)
+	}
+}
