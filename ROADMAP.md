@@ -46,7 +46,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 - [x] **1.** [dfm-be#1](https://github.com/saudm6/dfm-be/issues/1) Scaffold the Go service. Wave 1. Waits on nothing.
 - [x] **2.** [dfm-be#2](https://github.com/saudm6/dfm-be/issues/2) Add Postgres, TimescaleDB, and migrations. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
-- [ ] **3.** [dfm-be#3](https://github.com/saudm6/dfm-be/issues/3) Define the core market domain types. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
+- [x] **3.** [dfm-be#3](https://github.com/saudm6/dfm-be/issues/3) Define the core market domain types. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
 - [ ] **4.** [dfm-be#4](https://github.com/saudm6/dfm-be/issues/4) Publish the OpenAPI contract and generate the server. Wave 3. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **5.** [dfm-be#5](https://github.com/saudm6/dfm-be/issues/5) Add local accounts, sessions, and roles. Wave 4. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 4 ([dfm-be#4](https://github.com/saudm6/dfm-be/issues/4)).
 - [ ] **6.** [dfm-be#6](https://github.com/saudm6/dfm-be/issues/6) Add the in-process event bus. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
@@ -92,7 +92,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 - [ ] **35.** [dfm-be#21](https://github.com/saudm6/dfm-be/issues/21) Ingest DFM disclosures from EFSAH. Part of F04. Wave 5. Waits on step 6 ([dfm-be#6](https://github.com/saudm6/dfm-be/issues/6)), step 8 ([dfm-be#8](https://github.com/saudm6/dfm-be/issues/8)), step 16 ([dfm-be#10](https://github.com/saudm6/dfm-be/issues/10)).
 - [ ] **36.** [dfm-be#23](https://github.com/saudm6/dfm-be/issues/23) Ingest market announcements and corporate actions. Part of F04. Wave 6. Waits on step 35 ([dfm-be#21](https://github.com/saudm6/dfm-be/issues/21)).
-- [ ] **37.** [dfm-be#24](https://github.com/saudm6/dfm-be/issues/24) Spike: find the request behind DFM's 2-year price download. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
+- [x] **37.** [dfm-be#24](https://github.com/saudm6/dfm-be/issues/24) Spike: find the request behind DFM's 2-year price download. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
 - [ ] **38.** [dfm-be#25](https://github.com/saudm6/dfm-be/issues/25) Backfill two years of daily bars. Wave 5. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 16 ([dfm-be#10](https://github.com/saudm6/dfm-be/issues/10)), step 37 ([dfm-be#24](https://github.com/saudm6/dfm-be/issues/24)).
 - [ ] **39.** [dfm-be#26](https://github.com/saudm6/dfm-be/issues/26) Capture the daily bar at each close. Wave 6. Waits on step 8 ([dfm-be#8](https://github.com/saudm6/dfm-be/issues/8)), step 25 ([dfm-be#16](https://github.com/saudm6/dfm-be/issues/16)), step 38 ([dfm-be#25](https://github.com/saudm6/dfm-be/issues/25)).
 - [ ] **40.** [dfm-be#27](https://github.com/saudm6/dfm-be/issues/27) Adjust daily bars for corporate actions. Wave 7. Waits on step 36 ([dfm-be#23](https://github.com/saudm6/dfm-be/issues/23)), step 38 ([dfm-be#25](https://github.com/saudm6/dfm-be/issues/25)).

@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pressly/goose/v3 v3.29.0
+	github.com/shopspring/decimal v1.5.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 )
 
