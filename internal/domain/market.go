@@ -43,6 +43,7 @@ func (s Symbol) Valid() bool {
 // Exchange is the market an instrument is listed on.
 type Exchange string
 
+// Exchanges whose instruments appear in DFM's feeds.
 const (
 	ExchangeDFM         Exchange = "DFM"
 	ExchangeNasdaqDubai Exchange = "NASDAQ_DUBAI"
@@ -63,6 +64,7 @@ func (e Exchange) Valid() bool {
 // Currency is the ISO 4217 code an instrument trades in.
 type Currency string
 
+// Currencies of DFM and Nasdaq Dubai listings.
 const (
 	CurrencyAED Currency = "AED"
 	CurrencyUSD Currency = "USD"
@@ -83,6 +85,8 @@ func (c Currency) Valid() bool {
 // Freshness says how old a price can be when it is shown.
 type Freshness string
 
+// Freshness values: RealTime is live, Delayed lags by the feed's delay, and
+// EndOfDay is as of the last close.
 const (
 	RealTime Freshness = "realtime"
 	Delayed  Freshness = "delayed"
@@ -104,6 +108,8 @@ func (f Freshness) Valid() bool {
 // Source is the feed a price came from.
 type Source string
 
+// Sources: Interactive Brokers, DFM market watch, DFM price history, and
+// bars this service recorded itself from live quotes.
 const (
 	SourceIBKR           Source = "ibkr"
 	SourceDFMMarketWatch Source = "dfm-mw"
@@ -126,6 +132,7 @@ func (s Source) Valid() bool {
 // Interval is the period one Bar covers.
 type Interval string
 
+// Bar intervals.
 const (
 	OneMinute Interval = "1m"
 	OneDay    Interval = "1d"

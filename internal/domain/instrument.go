@@ -9,6 +9,7 @@ import (
 // securities list.
 type InstrumentClass string
 
+// Instrument classes.
 const (
 	ClassEquity InstrumentClass = "equity"
 	ClassETF    InstrumentClass = "etf"
@@ -36,6 +37,8 @@ func (c InstrumentClass) Valid() bool {
 // InstrumentStatus is whether an instrument can trade.
 type InstrumentStatus string
 
+// Instrument statuses. Delisted and matured instruments stay in the
+// security master so their history still resolves.
 const (
 	StatusListed    InstrumentStatus = "listed"
 	StatusSuspended InstrumentStatus = "suspended"
