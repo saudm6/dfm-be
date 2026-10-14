@@ -46,7 +46,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 - [x] **1.** [dfm-be#1](https://github.com/saudm6/dfm-be/issues/1) Scaffold the Go service. Wave 1. Waits on nothing.
 - [ ] **2.** [dfm-be#2](https://github.com/saudm6/dfm-be/issues/2) Add Postgres, TimescaleDB, and migrations. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
-- [ ] **3.** [dfm-be#3](https://github.com/saudm6/dfm-be/issues/3) Define the core market domain types. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
+- [x] **3.** [dfm-be#3](https://github.com/saudm6/dfm-be/issues/3) Define the core market domain types. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
 - [ ] **4.** [dfm-be#4](https://github.com/saudm6/dfm-be/issues/4) Publish the OpenAPI contract and generate the server. Wave 3. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **5.** [dfm-be#5](https://github.com/saudm6/dfm-be/issues/5) Add local accounts, sessions, and roles. Wave 4. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 4 ([dfm-be#4](https://github.com/saudm6/dfm-be/issues/4)).
 - [ ] **6.** [dfm-be#6](https://github.com/saudm6/dfm-be/issues/6) Add the in-process event bus. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
