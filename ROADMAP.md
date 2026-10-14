@@ -149,7 +149,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 ### F08 Correlation and pair spreads
 
-- [ ] **73.** [dfm-be#32](https://github.com/saudm6/dfm-be/issues/32) Build the returns and pairs analytics package. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
+- [x] **73.** [dfm-be#32](https://github.com/saudm6/dfm-be/issues/32) Build the returns and pairs analytics package. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **74.** [dfm-be#33](https://github.com/saudm6/dfm-be/issues/33) Serve correlation, regression, and spread endpoints. Wave 8. Waits on step 40 ([dfm-be#27](https://github.com/saudm6/dfm-be/issues/27)), step 42 ([dfm-be#29](https://github.com/saudm6/dfm-be/issues/29)), step 73 ([dfm-be#32](https://github.com/saudm6/dfm-be/issues/32)).
 - **75.** [dfm-fe#19](https://github.com/saudm6/dfm-fe/issues/19) Build the correlation matrix (CORR). Wave 9. Waits on step 18 ([dfm-fe#7](https://github.com/saudm6/dfm-fe/issues/7)), step 74 ([dfm-be#33](https://github.com/saudm6/dfm-be/issues/33)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).
 - **76.** [dfm-fe#20](https://github.com/saudm6/dfm-fe/issues/20) Build the regression and hedge ratio view (HRA). Wave 9. Waits on step 18 ([dfm-fe#7](https://github.com/saudm6/dfm-fe/issues/7)), step 74 ([dfm-be#33](https://github.com/saudm6/dfm-be/issues/33)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).
