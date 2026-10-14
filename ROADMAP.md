@@ -44,7 +44,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 ### F00 Foundation
 
-- [ ] **1.** [dfm-be#1](https://github.com/saudm6/dfm-be/issues/1) Scaffold the Go service. Wave 1. Waits on nothing.
+- [x] **1.** [dfm-be#1](https://github.com/saudm6/dfm-be/issues/1) Scaffold the Go service. Wave 1. Waits on nothing.
 - [ ] **2.** [dfm-be#2](https://github.com/saudm6/dfm-be/issues/2) Add Postgres, TimescaleDB, and migrations. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
 - [ ] **3.** [dfm-be#3](https://github.com/saudm6/dfm-be/issues/3) Define the core market domain types. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
 - [ ] **4.** [dfm-be#4](https://github.com/saudm6/dfm-be/issues/4) Publish the OpenAPI contract and generate the server. Wave 3. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
