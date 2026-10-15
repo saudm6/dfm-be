@@ -13,13 +13,15 @@ import (
 // NewRouter returns the handler for every HTTP route of the service.
 // Each request gets a request ID and is logged to logger when it completes.
 // db is the service database; /healthz reports whether it answers.
-func NewRouter(logger *slog.Logger, db Pinger) http.Handler {
+// /market/status reports the DFM session at now from the calendar cals loads.
+func NewRouter(logger *slog.Logger, db Pinger, cals CalendarLoader, now func() time.Time) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(logRequests(logger))
 	r.Use(middleware.Recoverer)
 
 	r.Get("/healthz", healthz(logger, db))
+	r.Get("/market/status", getMarketStatus(logger, cals, now))
 	return r
 }
 

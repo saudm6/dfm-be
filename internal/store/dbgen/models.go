@@ -3,3 +3,13 @@
 //   sqlc v1.31.1
 
 package dbgen
+
+import (
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type Holiday struct {
+	Day    pgtype.Date
+	Reason string
+	Kind   string
+}
