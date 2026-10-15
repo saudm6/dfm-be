@@ -25,6 +25,14 @@ func SecurityMasterDir() string {
 	return filepath.Join(filepath.Dir(file), "..", "..", "..", "testdata", "dfm", "security-master-2026-10-15")
 }
 
+// MarketWatchDir returns the directory of the market-watch responses
+// (mw/v1/stocks, mw/v1/status, mw/v1/indices) recorded from api2.dfm.ae at
+// 23:57 on 2026-10-15 in Dubai, after that day's close.
+func MarketWatchDir() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "..", "testdata", "dfm", "market-watch-2026-10-15")
+}
+
 // Request is a request the server received.
 type Request struct {
 	Method    string
@@ -39,6 +47,8 @@ type Request struct {
 //
 //	POST /web/widgets/v1/data Command=LiteSecuritiesLists  lite-securities-lists-<Language>.json
 //	GET  /mw/v1/stocks                                     mw-stocks.json
+//	GET  /mw/v1/status                                     mw-status.json
+//	GET  /mw/v1/indices                                    mw-indices.json
 //	GET  /web/sf/v1/sectors?sf_culture=<c>                 sectors-<c>.json
 //	GET  /cdn2/web/v1/get_security_overview?symbol=<s>     overview/<s>.json, or overview/<s>.<status>.json
 type Server struct {
@@ -112,6 +122,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.file(w, "lite-securities-lists-"+r.PostForm.Get("Language")+".json", "text/plain; charset=utf-8")
 	case r.Method == http.MethodGet && r.URL.Path == "/mw/v1/stocks":
 		s.file(w, "mw-stocks.json", "application/json; charset=utf-8")
+	case r.Method == http.MethodGet && r.URL.Path == "/mw/v1/status":
+		s.file(w, "mw-status.json", "application/json; charset=utf-8")
+	case r.Method == http.MethodGet && r.URL.Path == "/mw/v1/indices":
+		s.file(w, "mw-indices.json", "application/json; charset=utf-8")
 	case r.Method == http.MethodGet && r.URL.Path == "/web/sf/v1/sectors":
 		s.file(w, "sectors-"+r.URL.Query().Get("sf_culture")+".json", "application/json; charset=utf-8")
 	case r.Method == http.MethodGet && r.URL.Path == "/cdn2/web/v1/get_security_overview":

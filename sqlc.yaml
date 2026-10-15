@@ -34,5 +34,7 @@ sql:
             go_type: github.com/saudm6/dfm-be/internal/domain.Currency
           - column: instruments.status
             go_type: github.com/saudm6/dfm-be/internal/domain.InstrumentStatus
+          - column: market_watch_quotes.symbol
+            go_type: github.com/saudm6/dfm-be/internal/domain.Symbol
           - column: user_documents.kind
             go_type: github.com/saudm6/dfm-be/internal/domain.DocumentKind
