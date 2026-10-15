@@ -8,3 +8,19 @@ sql:
         package: dbgen
         out: internal/store/dbgen
         sql_package: pgx/v5
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: pg_catalog.numeric
+            go_type: github.com/shopspring/decimal.Decimal
+          - db_type: pg_catalog.numeric
+            nullable: true
+            go_type: github.com/shopspring/decimal.NullDecimal
+          - db_type: timestamptz
+            go_type: time.Time
+          - column: orders.symbol
+            go_type: github.com/saudm6/dfm-be/internal/domain.Symbol
+          - column: orders.side
+            go_type: github.com/saudm6/dfm-be/internal/domain.Side
+          - column: orders.state
+            go_type: github.com/saudm6/dfm-be/internal/domain.OrderState

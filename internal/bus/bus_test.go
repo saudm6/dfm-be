@@ -82,6 +82,21 @@ func TestEventCarriesPayload(t *testing.T) {
 	}
 }
 
+func TestOrderChangedCarriesOrderState(t *testing.T) {
+	b := bus.New()
+	s := bus.Subscribe(b, bus.OrderChanged, 1)
+	want := bus.OrderChangedEvent{
+		OrderID: "0199e7a4-9c3b-7d4e-8f00-000000000001",
+		Symbol:  "EMAAR",
+		State:   domain.PartFilled,
+		At:      time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC),
+	}
+	bus.Publish(b, bus.OrderChanged, want)
+	if got := <-s.C(); got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
 func TestInOrderDeliveryWhileConsuming(t *testing.T) {
 	const n = 10000
 	tests := []struct {

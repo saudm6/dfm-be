@@ -124,7 +124,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 ### F10 Order entry
 
-- [ ] **57.** [dfm-be#41](https://github.com/saudm6/dfm-be/issues/41) Model orders as a state machine with an audit log. Wave 3. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
+- [x] **57.** [dfm-be#41](https://github.com/saudm6/dfm-be/issues/41) Model orders as a state machine with an audit log. Wave 3. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **58.** [dfm-be#42](https://github.com/saudm6/dfm-be/issues/42) Route orders to IBKR and reconcile their status. Wave 9. Waits on step 23 ([dfm-be#14](https://github.com/saudm6/dfm-be/issues/14)), step 57 ([dfm-be#41](https://github.com/saudm6/dfm-be/issues/41)).
 - [ ] **59.** [dfm-be#43](https://github.com/saudm6/dfm-be/issues/43) Add pre-trade risk checks and a kill switch. Wave 11. Waits on step 8 ([dfm-be#8](https://github.com/saudm6/dfm-be/issues/8)), step 26 ([dfm-be#17](https://github.com/saudm6/dfm-be/issues/17)), step 57 ([dfm-be#41](https://github.com/saudm6/dfm-be/issues/41)).
 - [ ] **60.** [dfm-be#44](https://github.com/saudm6/dfm-be/issues/44) Add the orders API with paper and live modes. Wave 12. Waits on step 7 ([dfm-be#7](https://github.com/saudm6/dfm-be/issues/7)), step 58 ([dfm-be#42](https://github.com/saudm6/dfm-be/issues/42)), step 59 ([dfm-be#43](https://github.com/saudm6/dfm-be/issues/43)).

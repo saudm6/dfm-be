@@ -17,8 +17,6 @@ import (
 	"github.com/saudm6/dfm-be/internal/store/storetest"
 )
 
-var allMigrations = []int64{20261015120000, 20261015125900}
-
 func TestRunErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -138,7 +136,7 @@ func TestRunMigrateIsIdempotent(t *testing.T) {
 		name        string
 		wantApplied []int64
 	}{
-		{name: "empty database", wantApplied: allMigrations},
+		{name: "empty database", wantApplied: storetest.MigrationVersions(t)},
 		{name: "second run", wantApplied: []int64{}},
 	}
 	for _, tt := range tests {
@@ -287,8 +285,8 @@ func listenAddr(t *testing.T, logs io.Reader) string {
 		}
 		switch line.Msg {
 		case "database migrated":
-			if !slices.Equal(line.Applied, allMigrations) {
-				t.Errorf("startup applied %v, want %v", line.Applied, allMigrations)
+			if want := storetest.MigrationVersions(t); !slices.Equal(line.Applied, want) {
+				t.Errorf("startup applied %v, want %v", line.Applied, want)
 			}
 			migrated = true
 		case "http server listening":
