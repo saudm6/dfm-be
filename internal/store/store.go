@@ -4,11 +4,14 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 
 	"github.com/saudm6/dfm-be/migrations"
 )
@@ -34,9 +37,30 @@ func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 // the versions it applied, oldest first. It returns none when the schema is
 // already current.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]int64, error) {
+	return MigrateFS(ctx, pool, migrations.FS)
+}
+
+// MigrateFS is Migrate with the goose SQL migrations read from fsys.
+//
+// Pending migrations older than the newest applied one are applied too:
+// parallel branches timestamp their migrations when written but merge in any
+// order. A Postgres advisory lock serialises concurrent callers on the same
+// database, so only one of them applies each migration.
+func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) (applied []int64, err error) {
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, 300))
+	if err != nil {
+		return nil, fmt.Errorf("store: migration lock: %w", err)
+	}
 	db := stdlib.OpenDBFromPool(pool)
-	defer func() { _ = db.Close() }()
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS)
+	defer func() {
+		if cerr := db.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("store: close migration handle: %w", cerr))
+		}
+	}()
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, fsys,
+		goose.WithAllowOutofOrder(true),
+		goose.WithSessionLocker(locker),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("store: load migrations: %w", err)
 	}
@@ -44,7 +68,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) ([]int64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
-	applied := make([]int64, 0, len(results))
+	applied = make([]int64, 0, len(results))
 	for _, r := range results {
 		applied = append(applied, r.Source.Version)
 	}

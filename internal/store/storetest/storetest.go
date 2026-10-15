@@ -1,6 +1,9 @@
 // Package storetest gives tests a fresh, empty database on a TimescaleDB
 // container started with testcontainers-go. It needs a Docker daemon.
 //
+// Databases are created from template0: the image preinstalls timescaledb in
+// template1, which would hide a migration that fails to create it.
+//
 // The container starts once per test binary and is shared; every call gets its
 // own database, dropped when the test ends. The testcontainers reaper removes
 // the container when the test binary exits.
@@ -16,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/saudm6/dfm-be/internal/store"
@@ -47,13 +51,14 @@ func NewPool(t testing.TB) *pgxpool.Pool {
 	return pool
 }
 
-// NewURL returns the connection URL of a fresh database with no migrations
-// applied. The database is dropped when t ends.
+// NewURL returns the connection URL of a fresh, empty database: no
+// migrations applied and no extensions installed. The database is dropped
+// when t ends.
 func NewURL(t testing.TB) string {
 	t.Helper()
 	base := start(t)
 	name := fmt.Sprintf("test_%d", dbSeq.Add(1))
-	admin(t, base, "CREATE DATABASE "+name)
+	admin(t, base, "CREATE DATABASE "+name+" TEMPLATE template0")
 	t.Cleanup(func() { admin(t, base, "DROP DATABASE "+name+" WITH (FORCE)") })
 
 	u, err := url.Parse(base)
@@ -73,6 +78,7 @@ func start(t testing.TB) string {
 			postgres.WithDatabase("dfm"),
 			postgres.WithUsername("dfm"),
 			postgres.WithPassword("dfm"),
+			testcontainers.WithEnv(map[string]string{"TIMESCALEDB_TELEMETRY": "off"}),
 			postgres.BasicWaitStrategies(),
 		)
 		if err != nil {

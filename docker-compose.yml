@@ -8,11 +8,14 @@ services:
       POSTGRES_DB: dfm
       TIMESCALEDB_TELEMETRY: "off"
     ports:
-      - "${DFM_DB_PORT:-5432}:5432"
+      # Loopback only: the password is the public default.
+      - "127.0.0.1:${DFM_DB_PORT:-5432}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dfm -d dfm"]
+      # Probe TCP, not the socket: the image's init server answers on the
+      # socket before Postgres listens on TCP.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U dfm -d dfm"]
       interval: 2s
       timeout: 5s
       retries: 30
