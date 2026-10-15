@@ -27,6 +27,7 @@ func TestRouter(t *testing.T) {
 		path            string
 		wantStatus      int
 		wantContentType string
+		wantAllow       string
 		wantBody        string
 	}{
 		{
@@ -42,8 +43,9 @@ func TestRouter(t *testing.T) {
 			method:          http.MethodPost,
 			path:            "/healthz",
 			wantStatus:      http.StatusMethodNotAllowed,
-			wantContentType: "",
-			wantBody:        "",
+			wantContentType: "application/json",
+			wantAllow:       "GET",
+			wantBody:        "{\"code\":\"method_not_allowed\",\"message\":\"POST is not allowed on /healthz\"}\n",
 		},
 		{
 			name:            "openapi spec",
@@ -58,8 +60,8 @@ func TestRouter(t *testing.T) {
 			method:          http.MethodGet,
 			path:            "/nope",
 			wantStatus:      http.StatusNotFound,
-			wantContentType: "text/plain; charset=utf-8",
-			wantBody:        "404 page not found\n",
+			wantContentType: "application/json",
+			wantBody:        "{\"code\":\"not_found\",\"message\":\"no route for /nope\"}\n",
 		},
 	}
 	for _, tt := range tests {
@@ -74,6 +76,9 @@ func TestRouter(t *testing.T) {
 			}
 			if got := rec.Header().Get("Content-Type"); got != tt.wantContentType {
 				t.Errorf("Content-Type = %q, want %q", got, tt.wantContentType)
+			}
+			if got := rec.Header().Get("Allow"); got != tt.wantAllow {
+				t.Errorf("Allow = %q, want %q", got, tt.wantAllow)
 			}
 			if got := rec.Body.String(); got != tt.wantBody {
 				t.Errorf("body = %q, want %q", got, tt.wantBody)
@@ -105,15 +110,15 @@ func TestRouterServesSpecWithLength(t *testing.T) {
 	}
 }
 
-// failingServer serves the contract but every handler fails.
-type failingServer struct{}
+// failingServer serves the contract but its health check fails. It embeds
+// the interface so operations added to the spec need no stub here; calling
+// one of those panics.
+type failingServer struct {
+	gen.StrictServerInterface
+}
 
 func (failingServer) GetHealth(context.Context, gen.GetHealthRequestObject) (gen.GetHealthResponseObject, error) {
 	return nil, errors.New("database unreachable")
-}
-
-func (failingServer) GetOpenAPISpec(context.Context, gen.GetOpenAPISpecRequestObject) (gen.GetOpenAPISpecResponseObject, error) {
-	return nil, errors.New("spec unreadable")
 }
 
 func TestRouterHandlerErrorSendsErrorBody(t *testing.T) {
@@ -185,5 +190,39 @@ func TestRouterLogsEachRequest(t *testing.T) {
 	}
 	if line.RequestID == "" {
 		t.Error("request_id missing from log line")
+	}
+}
+
+func TestRouterPanicSendsErrorBody(t *testing.T) {
+	var logs bytes.Buffer
+	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{})
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.yaml", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if got, want := rec.Body.String(), "{\"code\":\"internal\",\"message\":\"internal server error\"}\n"; got != want {
+		t.Errorf("body = %q, want %q", got, want)
+	}
+
+	var line struct {
+		Level string `json:"level"`
+		Msg   string `json:"msg"`
+		Path  string `json:"path"`
+		Stack string `json:"stack"`
+	}
+	if err := json.NewDecoder(&logs).Decode(&line); err != nil {
+		t.Fatalf("decode log line: %v", err)
+	}
+	if line.Level != "ERROR" || line.Msg != "http handler panicked" || line.Path != "/openapi.yaml" {
+		t.Errorf("log line = %+v, want ERROR \"http handler panicked\" /openapi.yaml", line)
+	}
+	if line.Stack == "" {
+		t.Error("stack missing from log line")
 	}
 }

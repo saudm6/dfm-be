@@ -1,0 +1,8 @@
+package: paramtest
+output: paramtest.gen.go
+generate:
+  models: true
+  chi-server: true
+  strict-server: true
+output-options:
+  skip-prune: true

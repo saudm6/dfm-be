@@ -131,6 +131,50 @@ func TestEnumTextUnmarshal(t *testing.T) {
 	}
 }
 
+func TestEnumBind(t *testing.T) {
+	tests := []struct {
+		name    string
+		bind    func(string) (string, error)
+		in      string
+		want    string
+		wantErr string
+	}{
+		{name: "exchange", bind: bind[domain.Exchange], in: "NASDAQ_DUBAI", want: "NASDAQ_DUBAI"},
+		{name: "exchange unknown", bind: bind[domain.Exchange], in: "ADX", wantErr: `domain: invalid exchange: unknown value "ADX"`},
+		{name: "currency", bind: bind[domain.Currency], in: "USD", want: "USD"},
+		{name: "currency unknown", bind: bind[domain.Currency], in: "EUR", wantErr: `domain: invalid currency: unknown value "EUR"`},
+		{name: "freshness", bind: bind[domain.Freshness], in: "realtime", want: "realtime"},
+		{name: "freshness unknown", bind: bind[domain.Freshness], in: "stale", wantErr: `domain: invalid freshness: unknown value "stale"`},
+		{name: "source", bind: bind[domain.Source], in: "ibkr", want: "ibkr"},
+		{name: "source unknown", bind: bind[domain.Source], in: "bogus", wantErr: `domain: invalid source: unknown value "bogus"`},
+		{name: "interval", bind: bind[domain.Interval], in: "1m", want: "1m"},
+		{name: "interval unknown", bind: bind[domain.Interval], in: "5m", wantErr: `domain: invalid interval: unknown value "5m"`},
+		{name: "interval empty", bind: bind[domain.Interval], in: "", wantErr: `domain: invalid interval: unknown value ""`},
+		{name: "class", bind: bind[domain.InstrumentClass], in: "sukuk", want: "sukuk"},
+		{name: "class unknown", bind: bind[domain.InstrumentClass], in: "index", wantErr: `domain: invalid instrument class: unknown value "index"`},
+		{name: "status", bind: bind[domain.InstrumentStatus], in: "delisted", want: "delisted"},
+		{name: "status unknown", bind: bind[domain.InstrumentStatus], in: "halted", wantErr: `domain: invalid instrument status: unknown value "halted"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.bind(tt.in)
+			checkErr(t, err, tt.wantErr)
+			if got != tt.want {
+				t.Errorf("Bind(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func bind[T ~string, P interface {
+	*T
+	Bind(string) error
+}](s string) (string, error) {
+	var v T
+	err := P(&v).Bind(s)
+	return string(v), err
+}
+
 func unmarshalText[T ~string, P interface {
 	*T
 	encoding.TextUnmarshaler

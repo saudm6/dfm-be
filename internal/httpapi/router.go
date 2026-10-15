@@ -2,8 +2,11 @@
 package httpapi
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,20 +23,69 @@ func NewRouter(logger *slog.Logger) http.Handler {
 
 // newRouter serves the operations of api/openapi.yaml with ssi.
 func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface) http.Handler {
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(logRequests(logger))
-	r.Use(middleware.Recoverer)
-
+	r := newBaseRouter(logger)
 	h := gen.NewStrictHandlerWithOptions(ssi, nil, gen.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc:  badRequest,
-		ResponseErrorHandlerFunc: internalError(logger),
+		RequestErrorHandlerFunc:  bodyDecodeError,
+		ResponseErrorHandlerFunc: handlerError(logger),
 	})
 	gen.HandlerWithOptions(h, gen.ChiServerOptions{
 		BaseRouter:       r,
-		ErrorHandlerFunc: badRequest,
+		ErrorHandlerFunc: paramBindError,
 	})
 	return r
+}
+
+// newBaseRouter returns a router with the middleware and the JSON 404 and 405
+// answers, ready for the generated routes.
+func newBaseRouter(logger *slog.Logger) *chi.Mux {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(logRequests(logger))
+	r.Use(recoverPanics(logger))
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "no route for "+req.URL.Path)
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
+		var allowed []string
+		for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
+			if r.Match(chi.NewRouteContext(), m, req.URL.Path) {
+				allowed = append(allowed, m)
+			}
+		}
+		w.Header().Set("Allow", strings.Join(allowed, ", "))
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", req.Method+" is not allowed on "+req.URL.Path)
+	})
+	return r
+}
+
+// recoverPanics answers a panicking handler with 500 and the Error body, and
+// logs the panic with its stack.
+func recoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				rec := recover()
+				if rec == nil {
+					return
+				}
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
+				logger.LogAttrs(r.Context(), slog.LevelError, "http handler panicked",
+					slog.String("path", r.URL.Path),
+					slog.String("panic", fmt.Sprint(rec)),
+					slog.String("stack", string(debug.Stack())),
+					slog.String("request_id", middleware.GetReqID(r.Context())),
+				)
+				// A WebSocket handler has hijacked the connection; there is no response to write.
+				if r.Header.Get("Connection") == "Upgrade" {
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "internal", "internal server error")
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func logRequests(logger *slog.Logger) func(http.Handler) http.Handler {
