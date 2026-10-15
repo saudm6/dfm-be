@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -65,6 +66,10 @@ type Session struct {
 	CSRFToken string
 	tokenHash []byte
 }
+
+// ID identifies the session: two Sessions with the same ID are the same
+// login. It is derived from the token's hash and is not a credential.
+func (s Session) ID() string { return hex.EncodeToString(s.tokenHash) }
 
 // Options configures a Service.
 type Options struct {
@@ -230,10 +235,26 @@ func (s *Service) UserFromRequest(r *http.Request) (Session, error) {
 		return Session{}, ErrUnauthenticated
 	}
 	hash := hashToken(token)
+	return s.touch(r.Context(), hash[:])
+}
+
+// Revalidate looks sess up again by its token hash, under the same idle and
+// absolute expiry rules as UserFromRequest, and extends its idle expiry as a
+// request would. It returns the session with its user's current role, or
+// ErrUnauthenticated when the session was logged out or has expired. An open
+// WebSocket calls it periodically.
+func (s *Service) Revalidate(ctx context.Context, sess Session) (Session, error) {
+	if len(sess.tokenHash) != sha256.Size {
+		return Session{}, ErrUnauthenticated
+	}
+	return s.touch(ctx, sess.tokenHash)
+}
+
+func (s *Service) touch(ctx context.Context, hash []byte) (Session, error) {
 	now := s.opts.Now()
-	row, err := s.q.TouchSession(r.Context(), dbgen.TouchSessionParams{
+	row, err := s.q.TouchSession(ctx, dbgen.TouchSessionParams{
 		IdleExpiresAt: now.Add(s.opts.IdleTimeout),
-		TokenHash:     hash[:],
+		TokenHash:     hash,
 		Now:           now,
 	})
 	switch {
@@ -249,7 +270,7 @@ func (s *Service) UserFromRequest(r *http.Request) (Session, error) {
 	return Session{
 		User:      User{ID: row.ID, Username: row.Username, Role: role},
 		CSRFToken: row.CsrfToken,
-		tokenHash: hash[:],
+		tokenHash: hash,
 	}, nil
 }
 

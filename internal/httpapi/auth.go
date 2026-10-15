@@ -74,6 +74,7 @@ func (s server) Logout(ctx context.Context, _ gen.LogoutRequestObject) (gen.Logo
 	if err != nil {
 		return nil, err
 	}
+	s.gateway.EndSession(sess)
 	return gen.Logout204Response{Headers: gen.Logout204ResponseHeaders{SetCookie: cookie.String()}}, nil
 }
 

@@ -3,6 +3,7 @@ package ws_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,11 +26,23 @@ var (
 	member = auth.Session{User: auth.User{ID: 2, Username: "amal", Role: auth.Member}}
 )
 
+// liveSessions revalidates every session unchanged.
+type liveSessions struct{}
+
+func (liveSessions) Revalidate(_ context.Context, sess auth.Session) (auth.Session, error) {
+	return sess, nil
+}
+
 // serve returns a gateway over ws.Topics and the URL of a server that
-// serves it as sess.
+// serves it as sess, whose session stays valid.
 func serve(t *testing.T, sess auth.Session, opts ws.Options) (*ws.Gateway, string) {
 	t.Helper()
-	g := ws.New(slog.New(slog.DiscardHandler), ws.Topics, opts)
+	return serveWith(t, sess, ws.Topics, liveSessions{}, opts)
+}
+
+func serveWith(t *testing.T, sess auth.Session, topics []ws.Topic, sessions ws.Sessions, opts ws.Options) (*ws.Gateway, string) {
+	t.Helper()
+	g := ws.New(slog.New(slog.DiscardHandler), topics, sessions, opts)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.Serve(w, r, sess)
 	}))
@@ -240,7 +253,7 @@ func TestMaxTopics(t *testing.T) {
 }
 
 func TestPublishUnknownTopic(t *testing.T) {
-	g := ws.New(slog.New(slog.DiscardHandler), ws.Topics, ws.Options{})
+	g := ws.New(slog.New(slog.DiscardHandler), ws.Topics, liveSessions{}, ws.Options{})
 
 	err := g.Publish("quote", 1)
 
@@ -365,14 +378,19 @@ func TestSlowClientLosesEventsWithResync(t *testing.T) {
 	t.Logf("received %d of %d events with %d gaps and %d resyncs", received, burst, gaps, resyncs)
 }
 
+// The server waits up to one interval for each pong, and a ping's deadline
+// falls one interval after it is sent. The interval is long enough that
+// the client's half-interval margins hold on a slow, loaded machine.
 func TestMissedPongsCloseConnection(t *testing.T) {
-	const interval = 300 * time.Millisecond
+	const interval = time.Second
 	_, url := serve(t, owner, ws.Options{PingInterval: interval})
 
 	t.Run("one missed pong is tolerated", func(t *testing.T) {
+		t.Parallel()
 		cl := dial(t, url)
-		// The first ping goes unanswered past its deadline; the second is
-		// answered once the client reads again.
+		// The first ping, sent at 1s, goes unanswered past its 2s deadline;
+		// the second, sent at 2s, is answered once the client reads again
+		// at 2.5s.
 		time.Sleep(2*interval + interval/2)
 
 		cl.send(`{"type":"subscribe","topics":["status"]}`)
@@ -381,7 +399,9 @@ func TestMissedPongsCloseConnection(t *testing.T) {
 	})
 
 	t.Run("two missed pongs close the connection", func(t *testing.T) {
+		t.Parallel()
 		cl := dial(t, url)
+		// The server closes the connection at 3s; the client reads after.
 		time.Sleep(5 * interval)
 
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -394,6 +414,7 @@ func TestMissedPongsCloseConnection(t *testing.T) {
 	})
 
 	t.Run("a reading client stays connected", func(t *testing.T) {
+		t.Parallel()
 		cl := dial(t, url)
 		ctx := cl.c.CloseRead(t.Context())
 		select {
@@ -402,6 +423,130 @@ func TestMissedPongsCloseConnection(t *testing.T) {
 		case <-time.After(5 * interval):
 		}
 	})
+}
+
+// gatedSessions answers each Revalidate with the next reply the test sends,
+// so that a test decides when each revalidation happens and how it ends.
+type gatedSessions chan reply
+
+type reply struct {
+	sess auth.Session
+	err  error
+}
+
+func (g gatedSessions) Revalidate(ctx context.Context, _ auth.Session) (auth.Session, error) {
+	select {
+	case r := <-g:
+		return r.sess, r.err
+	case <-ctx.Done():
+		return auth.Session{}, ctx.Err()
+	}
+}
+
+// recheckOpts revalidates as soon as the test sends a reply.
+var recheckOpts = ws.Options{RecheckInterval: time.Millisecond}
+
+func expectClose(t *testing.T, cl *client, wantStatus websocket.StatusCode, wantReason string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for {
+		_, b, err := cl.c.Read(ctx)
+		if err == nil {
+			t.Errorf("message %s, want the connection closed", b)
+			continue
+		}
+		var ce websocket.CloseError
+		if !errors.As(err, &ce) || ce.Code != wantStatus || ce.Reason != wantReason {
+			t.Errorf("read error = %v, want close status %d reason %q", err, wantStatus, wantReason)
+		}
+		return
+	}
+}
+
+func TestEndedSessionClosesConnection(t *testing.T) {
+	sessions := gatedSessions(make(chan reply))
+	_, url := serveWith(t, owner, ws.Topics, sessions, recheckOpts)
+	cl := dial(t, url)
+	cl.send(`{"type":"subscribe","topics":["status"]}`)
+	cl.expect(`{"type":"snapshot","topic":"status","seq":1,"data":null}`)
+
+	sessions <- reply{owner, nil}
+	cl.send(`{"type":"subscribe","topics":["quote:EMAAR"]}`)
+	cl.expect(`{"type":"snapshot","topic":"quote:EMAAR","seq":1,"data":null}`)
+	sessions <- reply{err: fmt.Errorf("auth: find session: %w", context.DeadlineExceeded)}
+	cl.send(`{"type":"subscribe","topics":["movers"]}`)
+	cl.expect(`{"type":"snapshot","topic":"movers","seq":1,"data":null}`)
+	sessions <- reply{err: auth.ErrUnauthenticated}
+
+	expectClose(t, cl, ws.StatusSessionEnded, "session_ended")
+}
+
+func TestDemotedSessionLosesMarketDataTopics(t *testing.T) {
+	sessions := gatedSessions(make(chan reply))
+	g, url := serveWith(t, owner, ws.Topics, sessions, recheckOpts)
+	cl := dial(t, url)
+	cl.send(`{"type":"subscribe","topics":["quote:EMAAR","status","positions","chat:desk-1"]}`)
+	cl.expect(
+		`{"type":"snapshot","topic":"quote:EMAAR","seq":1,"data":null}`,
+		`{"type":"snapshot","topic":"status","seq":1,"data":null}`,
+		`{"type":"snapshot","topic":"positions","seq":1,"data":null}`,
+		`{"type":"snapshot","topic":"chat:desk-1","seq":1,"data":null}`,
+	)
+	demoted := owner
+	demoted.User.Role = auth.Member
+
+	sessions <- reply{demoted, nil}
+
+	cl.expect(
+		`{"type":"error","topic":"positions","code":"forbidden","message":"your role may not read positions"}`,
+		`{"type":"error","topic":"quote:EMAAR","code":"forbidden","message":"your role may not read quote"}`,
+	)
+	publish(t, g, "quote:EMAAR", map[string]string{"last": "11.4"})
+	publish(t, g, "positions", []string{})
+	publish(t, g, "status", map[string]string{"ibkr": "up"})
+	publish(t, g, "chat:desk-1", map[string]string{"id": "m1"})
+	cl.expect(
+		`{"type":"data","topic":"status","seq":2,"data":{"ibkr":"up"}}`,
+		`{"type":"data","topic":"chat:desk-1","seq":2,"data":{"id":"m1"}}`,
+	)
+	cl.send(`{"type":"subscribe","topics":["quote:EMAAR"]}`)
+	cl.expect(`{"type":"error","topic":"quote:EMAAR","code":"forbidden","message":"your role may not read quote"}`)
+}
+
+func TestTopicAllowHook(t *testing.T) {
+	sessions := gatedSessions(make(chan reply))
+	topics := []ws.Topic{{
+		Name: "room", Keyed: true, Delivery: ws.Every, Access: ws.AnyUser,
+		Allow: func(sess auth.Session, key string) error {
+			if key != sess.User.Username {
+				return fmt.Errorf("room %s is not yours", key)
+			}
+			return nil
+		},
+	}}
+	_, url := serveWith(t, owner, topics, sessions, recheckOpts)
+	cl := dial(t, url)
+
+	cl.send(`{"type":"subscribe","topics":["room:saud","room:amal"]}`)
+
+	cl.expect(
+		`{"type":"snapshot","topic":"room:saud","seq":1,"data":null}`,
+		`{"type":"error","topic":"room:amal","code":"forbidden","message":"room amal is not yours"}`,
+	)
+
+	// The hook runs again on each revalidation.
+	renamed := owner
+	renamed.User.Username = "saud2"
+	sessions <- reply{renamed, nil}
+
+	cl.expect(`{"type":"error","topic":"room:saud","code":"forbidden","message":"room saud is not yours"}`)
+}
+
+func TestEndSessionOnNilGateway(t *testing.T) {
+	var g *ws.Gateway
+
+	g.EndSession(owner)
 }
 
 func TestCloseSendsGoingAway(t *testing.T) {
@@ -471,7 +616,7 @@ func TestForwardKeyedTopic(t *testing.T) {
 }
 
 func TestForwardUnknownTopicPanics(t *testing.T) {
-	g := ws.New(slog.New(slog.DiscardHandler), ws.Topics, ws.Options{})
+	g := ws.New(slog.New(slog.DiscardHandler), ws.Topics, liveSessions{}, ws.Options{})
 	defer func() {
 		if got := fmt.Sprint(recover()); got != "ws: Forward to unknown topic news" {
 			t.Errorf("panic = %q, want %q", got, "ws: Forward to unknown topic news")

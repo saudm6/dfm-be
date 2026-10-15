@@ -30,9 +30,10 @@ import (
 // those in api.PublicOperations needs one of its sessions.
 // docs keeps each user's layouts and chart templates under /me/documents.
 // GET /ws upgrades a signed-in, same-origin request to a WebSocket served by
-// gateway; with a nil gateway there is no /ws.
+// gateway, and logging out closes the session's WebSockets; with a nil
+// gateway there is no /ws.
 func NewRouter(logger *slog.Logger, db Pinger, cals CalendarLoader, now func() time.Time, sessions *auth.Service, docs *documents.Store, gateway *ws.Gateway) http.Handler {
-	r := newRouter(logger, server{logger: logger, db: db, cals: cals, now: now, sessions: sessions, docs: docs}, sessions)
+	r := newRouter(logger, server{logger: logger, db: db, cals: cals, now: now, sessions: sessions, docs: docs, gateway: gateway}, sessions)
 	if gateway != nil {
 		r.Get("/ws", serveWebSocket(logger, sessions, gateway))
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/domain"
 )
 
@@ -27,7 +28,7 @@ const (
 	// AnyUser lets every signed-in account subscribe.
 	AnyUser Access = iota + 1
 	// MarketData lets only roles with market data subscribe
-	// (auth.RequireMarketData).
+	// (auth.Role.MarketData).
 	MarketData
 )
 
@@ -46,6 +47,11 @@ type Topic struct {
 	ValidKey func(key string) bool
 	Delivery Delivery
 	Access   Access
+	// Allow, when set, is checked after Access on each subscribe and each
+	// session revalidation. It returns an error, whose text the client is
+	// sent, when sess may not read the topic with key ("" for a topic
+	// without a key). It must not block or call the Gateway.
+	Allow func(sess auth.Session, key string) error
 }
 
 // Topics are the topics of api/websocket.md. Each feature PR feeds its topic
@@ -59,23 +65,25 @@ var Topics = []Topic{
 	{Name: "orders", Delivery: Every, Access: MarketData},
 	{Name: "positions", Delivery: Latest, Access: MarketData},
 	{Name: "status", Delivery: Latest, Access: AnyUser},
+	// Any signed-in user may read any chat room until BE-48 restricts rooms
+	// and direct messages with an Allow hook.
 	{Name: "chat", Keyed: true, Delivery: Every, Access: AnyUser},
 }
 
-// lookup returns the Topic that the full topic name s belongs to, such as
-// the quote Topic for "quote:EMAAR".
-func lookup(topics map[string]Topic, s string) (Topic, error) {
+// lookup returns the Topic that the full topic name s belongs to and its
+// key, such as the quote Topic and "EMAAR" for "quote:EMAAR".
+func lookup(topics map[string]Topic, s string) (Topic, string, error) {
 	name, key, hasKey := strings.Cut(s, ":")
 	t, ok := topics[name]
 	switch {
 	case !ok:
-		return Topic{}, fmt.Errorf("no topic named %q", name)
+		return Topic{}, "", fmt.Errorf("no topic named %q", name)
 	case t.Keyed && !hasKey:
-		return Topic{}, fmt.Errorf("topic %s needs a key: %s:{key}", name, name)
+		return Topic{}, "", fmt.Errorf("topic %s needs a key: %s:{key}", name, name)
 	case !t.Keyed && hasKey:
-		return Topic{}, fmt.Errorf("topic %s takes no key", name)
+		return Topic{}, "", fmt.Errorf("topic %s takes no key", name)
 	case t.Keyed && (key == "" || len(key) > maxKeyLen || (t.ValidKey != nil && !t.ValidKey(key))):
-		return Topic{}, fmt.Errorf("%q is not a valid key for topic %s", key, name)
+		return Topic{}, "", fmt.Errorf("%q is not a valid key for topic %s", key, name)
 	}
-	return t, nil
+	return t, key, nil
 }

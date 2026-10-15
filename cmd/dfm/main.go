@@ -212,13 +212,14 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
-	gateway := ws.New(logger, ws.Topics, ws.Options{})
+	sessions := auth.NewService(pool, auth.Options{
+		IdleTimeout:    cfg.SessionIdleTimeout,
+		MaxAge:         cfg.SessionMaxAge,
+		InsecureCookie: !cfg.CookieSecure,
+	})
+	gateway := ws.New(logger, ws.Topics, sessions, ws.Options{})
 	srv := &http.Server{
-		Handler: httpapi.NewRouter(logger, pool, calendar.Loader{DB: pool, Hours: cfg.Market.Hours()}, clock, auth.NewService(pool, auth.Options{
-			IdleTimeout:    cfg.SessionIdleTimeout,
-			MaxAge:         cfg.SessionMaxAge,
-			InsecureCookie: !cfg.CookieSecure,
-		}), documents.NewStore(pool, clock), gateway),
+		Handler:           httpapi.NewRouter(logger, pool, calendar.Loader{DB: pool, Hours: cfg.Market.Hours()}, clock, sessions, documents.NewStore(pool, clock), gateway),
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}

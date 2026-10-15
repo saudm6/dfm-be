@@ -7,12 +7,14 @@
 package ws
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,6 +38,9 @@ type Options struct {
 	// WriteTimeout closes a connection whose client takes longer than this
 	// to accept one message. Default 10s.
 	WriteTimeout time.Duration
+	// RecheckInterval is how often each connection revalidates its session
+	// (Sessions.Revalidate). Default 20s, the ping interval.
+	RecheckInterval time.Duration
 }
 
 func (o Options) withDefaults() Options {
@@ -51,34 +56,56 @@ func (o Options) withDefaults() Options {
 	if o.WriteTimeout <= 0 {
 		o.WriteTimeout = 10 * time.Second
 	}
+	if o.RecheckInterval <= 0 {
+		o.RecheckInterval = 20 * time.Second
+	}
 	return o
+}
+
+// StatusSessionEnded is the close status of a connection whose session was
+// logged out or expired.
+const StatusSessionEnded websocket.StatusCode = 4401
+
+// Sessions revalidates the session of an open connection. *auth.Service
+// implements it.
+type Sessions interface {
+	// Revalidate returns sess with its user's current role, counting the
+	// call as activity, or an error wrapping auth.ErrUnauthenticated when
+	// the session has ended.
+	Revalidate(ctx context.Context, sess auth.Session) (auth.Session, error)
 }
 
 // Gateway serves WebSocket connections and fans published messages out to
 // their subscribers. It is safe for concurrent use.
 type Gateway struct {
-	logger *slog.Logger
-	topics map[string]Topic
-	opts   Options
+	logger   *slog.Logger
+	topics   map[string]Topic
+	sessions Sessions
+	opts     Options
 
 	// mu guards the fields below. It is taken before any conn.mu.
 	mu     sync.Mutex
 	conns  map[*conn]struct{}
 	subs   map[string]map[*conn]*subscription
 	latest map[string]json.RawMessage
-	closed bool
-	wg     sync.WaitGroup
+	// bySession holds the connections of each session, by auth.Session.ID.
+	bySession map[string]map[*conn]struct{}
+	closed    bool
+	wg        sync.WaitGroup
 }
 
-// New returns a Gateway serving topics.
-func New(logger *slog.Logger, topics []Topic, opts Options) *Gateway {
+// New returns a Gateway serving topics. Each connection revalidates its
+// session with sessions every Options.RecheckInterval.
+func New(logger *slog.Logger, topics []Topic, sessions Sessions, opts Options) *Gateway {
 	g := &Gateway{
-		logger: logger,
-		topics: make(map[string]Topic, len(topics)),
-		opts:   opts.withDefaults(),
-		conns:  map[*conn]struct{}{},
-		subs:   map[string]map[*conn]*subscription{},
-		latest: map[string]json.RawMessage{},
+		logger:    logger,
+		topics:    make(map[string]Topic, len(topics)),
+		sessions:  sessions,
+		opts:      opts.withDefaults(),
+		conns:     map[*conn]struct{}{},
+		subs:      map[string]map[*conn]*subscription{},
+		latest:    map[string]json.RawMessage{},
+		bySession: map[string]map[*conn]struct{}{},
 	}
 	for _, t := range topics {
 		g.topics[t.Name] = t
@@ -90,7 +117,7 @@ func New(logger *slog.Logger, topics []Topic, opts Options) *Gateway {
 // full topic name such as "quote:EMAAR". On a Latest topic it also becomes
 // the snapshot that new subscribers get.
 func (g *Gateway) Publish(topic string, data any) error {
-	t, err := lookup(g.topics, topic)
+	t, _, err := lookup(g.topics, topic)
 	if err != nil {
 		return fmt.Errorf("ws: publish: %w", err)
 	}
@@ -137,6 +164,20 @@ func (g *Gateway) Close() {
 	g.wg.Wait()
 }
 
+// EndSession closes every connection of sess with StatusSessionEnded,
+// without waiting for the closing handshakes. Logout calls it. It does
+// nothing on a nil Gateway.
+func (g *Gateway) EndSession(sess auth.Session) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for c := range g.bySession[sess.ID()] {
+		go c.end()
+	}
+}
+
 // Serve upgrades the request to a WebSocket and serves it for sess until
 // the connection ends. The caller has authenticated the request and checked
 // its Origin.
@@ -145,12 +186,14 @@ func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	if err != nil {
 		return // Accept has answered the request.
 	}
-	ctx, cancel := context.WithCancel(auth.WithSession(r.Context(), sess))
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	c := &conn{
 		g:    g,
 		ws:   wsc,
 		ctx:  ctx,
+		id:   sess.ID(),
+		sess: sess,
 		subs: map[string]*subscription{},
 		wake: make(chan struct{}, 1),
 	}
@@ -162,6 +205,10 @@ func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 		return
 	}
 	g.conns[c] = struct{}{}
+	if g.bySession[c.id] == nil {
+		g.bySession[c.id] = map[*conn]struct{}{}
+	}
+	g.bySession[c.id][c] = struct{}{}
 	g.wg.Add(1)
 	g.mu.Unlock()
 	defer g.wg.Done()
@@ -170,6 +217,7 @@ func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	var done sync.WaitGroup
 	done.Go(func() { c.writeLoop(cancel) })
 	done.Go(func() { c.pingLoop(cancel) })
+	done.Go(func() { c.recheckLoop(cancel) })
 	c.readLoop()
 	cancel()
 	_ = wsc.CloseNow()
@@ -180,6 +228,12 @@ func (g *Gateway) remove(c *conn) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.conns, c)
+	if m := g.bySession[c.id]; m != nil {
+		delete(m, c)
+		if len(m) == 0 {
+			delete(g.bySession, c.id)
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for topic := range c.subs {
@@ -226,6 +280,7 @@ var null = json.RawMessage("null")
 type subscription struct {
 	topic string
 	t     Topic
+	key   string
 	seq   int64
 	// pending is the last queued, unsent data message of a Latest topic.
 	// When the send queue is full, newer values overwrite it.
@@ -246,10 +301,14 @@ type frame struct {
 type conn struct {
 	g   *Gateway
 	ws  *websocket.Conn
-	ctx context.Context // carries the session
+	ctx context.Context
+	id  string // the session's ID
 
 	// mu guards the fields below.
-	mu      sync.Mutex
+	mu sync.Mutex
+	// sess is the session as last revalidated; gen counts its changes.
+	sess    auth.Session
+	gen     uint64
 	subs    map[string]*subscription
 	queue   []*frame
 	bounded int
@@ -290,30 +349,43 @@ func (c *conn) readLoop() {
 }
 
 func (c *conn) subscribe(topic string) {
-	g := c.g
-	t, err := lookup(g.topics, topic)
+	t, key, err := lookup(c.g.topics, topic)
 	if err != nil {
 		c.sendError(topic, codeUnknownTopic, err.Error())
 		return
 	}
-	if t.Access == MarketData {
-		if err := auth.RequireMarketData(c.ctx); err != nil {
-			c.sendError(topic, codeForbidden, "your role may not read "+t.Name)
+	for {
+		sess, gen := c.session()
+		if reason := denied(t, sess, key); reason != "" {
+			c.sendError(topic, codeForbidden, reason)
+			return
+		}
+		if c.add(topic, t, key, gen) {
 			return
 		}
 	}
+}
+
+// add subscribes to topic and queues its snapshot. It does nothing and
+// reports false when the session has changed since generation gen, so
+// that access is checked again against the new session.
+func (c *conn) add(topic string, t Topic, key string, gen uint64) bool {
+	g := c.g
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.gen != gen {
+		return false
+	}
 	if _, ok := c.subs[topic]; ok {
-		return
+		return true
 	}
 	if len(c.subs) >= g.opts.MaxTopics {
 		c.enqueueError(topic, codeBadRequest, fmt.Sprintf("a connection may subscribe to at most %d topics", g.opts.MaxTopics))
-		return
+		return true
 	}
-	sub := &subscription{topic: topic, t: t, seq: 1}
+	sub := &subscription{topic: topic, t: t, key: key, seq: 1}
 	c.subs[topic] = sub
 	if g.subs[topic] == nil {
 		g.subs[topic] = map[*conn]*subscription{}
@@ -324,6 +396,26 @@ func (c *conn) subscribe(topic string) {
 		data = g.latest[topic]
 	}
 	c.enqueue(&frame{sub: sub, msg: message{Type: "snapshot", Topic: topic, Seq: 1, Data: data}})
+	return true
+}
+
+// denied returns why sess may not read the topic of t with key, or "".
+func denied(t Topic, sess auth.Session, key string) string {
+	if t.Access == MarketData && !sess.User.Role.MarketData() {
+		return "your role may not read " + t.Name
+	}
+	if t.Allow != nil {
+		if err := t.Allow(sess, key); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
+}
+
+func (c *conn) session() (auth.Session, uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sess, c.gen
 }
 
 func (c *conn) unsubscribe(topic string) {
@@ -332,11 +424,15 @@ func (c *conn) unsubscribe(topic string) {
 	defer g.mu.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	sub, ok := c.subs[topic]
-	if !ok {
-		return
+	if sub, ok := c.subs[topic]; ok {
+		c.dropLocked(sub)
 	}
-	g.unsubscribeLocked(c, topic)
+}
+
+// dropLocked ends sub and removes its queued messages. g.mu and c.mu are
+// held.
+func (c *conn) dropLocked(sub *subscription) {
+	c.g.unsubscribeLocked(c, sub.topic)
 	kept := c.queue[:0]
 	for _, f := range c.queue {
 		if f.sub == sub {
@@ -505,4 +601,74 @@ func (c *conn) pingLoop(stop context.CancelFunc) {
 			return
 		}
 	}
+}
+
+// recheckLoop revalidates the session every RecheckInterval. It closes the
+// connection with StatusSessionEnded once the session has ended, and drops
+// the subscriptions the session may no longer read.
+func (c *conn) recheckLoop(stop context.CancelFunc) {
+	defer stop()
+	t := time.NewTicker(c.g.opts.RecheckInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-t.C:
+		}
+		old, _ := c.session()
+		sess, err := c.g.sessions.Revalidate(c.ctx, old)
+		switch {
+		case errors.Is(err, auth.ErrUnauthenticated):
+			c.end()
+			return
+		case c.ctx.Err() != nil:
+			return
+		case err != nil:
+			c.g.logger.LogAttrs(c.ctx, slog.LevelError, "ws: revalidate session",
+				slog.Int64("user_id", old.User.ID),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		c.setSession(sess)
+	}
+}
+
+// setSession makes sess the connection's session and ends, with a
+// forbidden error each, the subscriptions it may no longer read.
+func (c *conn) setSession(sess auth.Session) {
+	c.mu.Lock()
+	c.sess = sess
+	c.gen++
+	subs := make([]*subscription, 0, len(c.subs))
+	for _, sub := range c.subs {
+		subs = append(subs, sub)
+	}
+	c.mu.Unlock()
+	slices.SortFunc(subs, func(a, b *subscription) int { return cmp.Compare(a.topic, b.topic) })
+	for _, sub := range subs {
+		if reason := denied(sub.t, sess, sub.key); reason != "" {
+			c.revoke(sub, reason)
+		}
+	}
+}
+
+// revoke ends sub, unless it has already ended, and queues a forbidden
+// error giving reason.
+func (c *conn) revoke(sub *subscription, reason string) {
+	c.g.mu.Lock()
+	defer c.g.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.subs[sub.topic] != sub {
+		return
+	}
+	c.dropLocked(sub)
+	c.enqueueError(sub.topic, codeForbidden, reason)
+}
+
+// end closes the connection because its session has ended.
+func (c *conn) end() {
+	_ = c.ws.Close(StatusSessionEnded, "session_ended")
 }

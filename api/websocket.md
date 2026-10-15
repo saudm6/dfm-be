@@ -10,9 +10,15 @@ schemas named below (`Quote`, `Error`, ...) are the schemas defined there.
 - Endpoint: `GET /ws`, upgraded to a WebSocket.
 - Origin: a request whose `Origin` header names another host than the one
   it was sent to is refused with `403` and the `Error` body, before the
-  session is looked at. Browsers send the session cookie on cross-site
-  WebSocket upgrades, so this is what stops another site from opening a
-  socket as the user. Requests without `Origin` (non-browser clients) pass.
+  session is looked at. The session cookie is `SameSite=Strict`, so
+  browsers do not send it on cross-site upgrades. A same-site page on
+  another origin (another port or subdomain of the same site) does get the
+  cookie; the Origin check is what stops it from opening a socket as the
+  user. Requests without `Origin` (non-browser clients) pass.
+- Proxies: a reverse proxy in front of `/ws`, such as the Angular dev
+  server's proxy, must pass the browser's `Host` header through unchanged.
+  With `changeOrigin: true` the proxy rewrites `Host` to the backend's, the
+  browser's `Origin` no longer matches it, and the upgrade gets `403`.
 - Authentication: the session cookie from
   [dfm-be#5](https://github.com/saudm6/dfm-be/issues/5). Without a valid
   session the upgrade is refused with `401` and the `Error` body. A `GET /ws`
@@ -21,11 +27,44 @@ schemas named below (`Quote`, `Error`, ...) are the schemas defined there.
 - The server pings every 20 seconds. A ping not answered within 20 seconds
   is missed; after two missed pings in a row the server closes the
   connection with status 1008. Browsers answer pings automatically.
+- A client that does not accept a message within 10 seconds is
+  disconnected without a close frame; the browser reports status 1006.
+- A client message larger than 32 KiB closes the connection with status
+  1009.
 - When the server shuts down it closes connections with status 1001; the
   client reconnects and subscribes again.
 - A connection starts with no subscriptions and may hold at most 256.
 - Decimals in payloads use the HTTP wire form: strings without trailing
   zeros ("11.4", "0").
+
+### Session checks
+
+Every 20 seconds, the ping interval, each socket looks its session up again
+under the same idle and absolute expiry rules as an HTTP request
+([dfm-be#5](https://github.com/saudm6/dfm-be/issues/5)).
+
+- A successful check counts as activity: like an HTTP request, it extends
+  the session's idle expiry, for the socket and for HTTP. An open socket
+  therefore keeps its session alive, but never past the session's maximum
+  age (7 days by default).
+- When the session has been logged out or has expired, the server closes
+  the socket with status `4401` and reason `session_ended`.
+  `POST /auth/logout` closes all of that session's sockets at once, without
+  waiting for the next check. The client treats `4401` as signed out and
+  does not reconnect until the user signs in again.
+- Each check also reads the user's role again. Topics the role may no
+  longer read are unsubscribed, each with an `error` of code `forbidden`;
+  the socket and its other topics stay.
+
+### Close statuses
+
+| Status | Meaning |
+|--------|---------|
+| 1001   | Server shutting down; reconnect. |
+| 1006   | No close frame, for example after the 10 second write timeout; reconnect. |
+| 1008   | Two pings in a row went unanswered; reconnect. |
+| 1009   | A client message exceeded 32 KiB. |
+| 4401   | The session ended (`session_ended`); sign in again. |
 
 ## Envelope
 
@@ -41,8 +80,10 @@ has is a no-op. Each topic is checked on its own: a refused topic gets an
 {"type": "subscribe", "topics": ["quote:EMAAR", "market.summary"]}
 ```
 
-Unsubscribe. After the server reads this message it sends no more `data` for
-those topics.
+Unsubscribe. After the server reads this message it queues no more
+messages for those topics. A message it had already taken from the queue to
+send may still arrive after the unsubscribe, so the client ignores messages
+for topics it no longer holds.
 
 ```json
 {"type": "unsubscribe", "topics": ["quote:EMAAR"]}
@@ -102,10 +143,11 @@ A refused subscription or a bad message:
 |-----------|--------|-------|
 | `type`    | string | `error` |
 | `topic`   | string | The topic concerned. Omitted when the error is not about one topic, for example a message that is not valid JSON. |
-| `code`    | string | Machine-readable reason, from the same snake_case vocabulary as the HTTP `Error.code`: `forbidden` (the user's role may not read the topic), `unknown_topic` (no such name, a missing or unexpected key, or a key that is not valid, such as a symbol that is not upper case), `bad_request` (the message is not a JSON object, has an unknown `type` or no `topics`, or would exceed the subscription limit). |
+| `code`    | string | Machine-readable reason, from the same snake_case vocabulary as the HTTP `Error.code`: `forbidden` (the user's role, or the topic's per-key check, does not allow the topic; see Topics and Session checks), `unknown_topic` (no such name, a missing or unexpected key, or a key that is not valid, such as a symbol that is not upper case), `bad_request` (the message is not a JSON object, has an unknown `type` or no `topics`, or would exceed the subscription limit). |
 | `message` | string | Optional human-readable detail. |
 
-An `error` does not close the connection.
+An `error` does not close the connection. When the connection's send queue
+(see Slow clients) is full, an `error` is dropped rather than queued.
 
 ## Slow clients
 
@@ -171,5 +213,9 @@ its feature PR publishes, a topic only sends its snapshot.
 Topic access is checked with the role check from
 [dfm-be#5](https://github.com/saudm6/dfm-be/issues/5): `marketData` topics
 need a role with market data (`owner`), as the HTTP `marketData` scope
-does. A subscription the user's role does not allow gets an `error` with
-code `forbidden`.
+does. A topic may also have a per-key access check (`ws.Topic.Allow`),
+run after the role check. Both run on each `subscribe` and again on each
+session check. A subscription the user may not read gets an `error` with
+code `forbidden`. Today any signed-in user may read any `chat:{room}`;
+[dfm-be#48](https://github.com/saudm6/dfm-be/issues/48) restricts chat rooms
+and direct messages through the per-key check.

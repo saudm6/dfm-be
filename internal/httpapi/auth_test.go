@@ -118,6 +118,15 @@ func send(t *testing.T, srv *httptest.Server, req *http.Request) response {
 	}
 }
 
+// otherToken returns token with its first character changed to another
+// base64url character, so it never equals token.
+func otherToken(token string) string {
+	if token[0] == 'A' {
+		return "B" + token[1:]
+	}
+	return "A" + token[1:]
+}
+
 // login signs in through POST /auth/login and returns the session cookie and
 // the CSRF token.
 func login(t *testing.T, srv *httptest.Server, username string) (*http.Cookie, string) {
@@ -183,7 +192,7 @@ func TestLoginMeLogout(t *testing.T) {
 		wantBody   string
 	}{
 		{"logout without CSRF token", "", http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
-		{"logout with wrong CSRF token", "x" + me.CSRFToken[1:], http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
+		{"logout with wrong CSRF token", otherToken(me.CSRFToken), http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
 	}
 	for _, tt := range tests {
 		got := call(t, srv, http.MethodPost, "/auth/logout", session, tt.csrf, "")
