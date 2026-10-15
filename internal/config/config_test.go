@@ -7,6 +7,8 @@ import (
 	"github.com/saudm6/dfm-be/internal/config"
 )
 
+const dbURL = "postgres://dfm:dfm@localhost:5432/dfm?sslmode=disable"
+
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -15,13 +17,19 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name:    "defaults",
-			environ: []string{"DFM_HTTP_ADDR=:8080"},
-			want:    config.Config{HTTPAddr: ":8080", LogLevel: slog.LevelInfo},
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL},
+			want: config.Config{
+				HTTPAddr: ":8080",
+				Base:     config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
+			},
 		},
 		{
 			name:    "all set",
-			environ: []string{"DFM_HTTP_ADDR=127.0.0.1:9000", "DFM_LOG_LEVEL=debug"},
-			want:    config.Config{HTTPAddr: "127.0.0.1:9000", LogLevel: slog.LevelDebug},
+			environ: []string{"DFM_HTTP_ADDR=127.0.0.1:9000", "DFM_LOG_LEVEL=debug", "DFM_DATABASE_URL=" + dbURL},
+			want: config.Config{
+				HTTPAddr: "127.0.0.1:9000",
+				Base:     config.Base{LogLevel: slog.LevelDebug, DatabaseURL: dbURL},
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -44,18 +52,23 @@ func TestLoadErrors(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "missing required variable",
+			name:    "missing required variables",
 			environ: nil,
-			wantErr: `config: env: required environment variable "DFM_HTTP_ADDR" is not set`,
+			wantErr: `config: env: required environment variable "DFM_HTTP_ADDR" is not set; required environment variable "DFM_DATABASE_URL" is not set`,
 		},
 		{
 			name:    "empty required variable",
-			environ: []string{"DFM_HTTP_ADDR="},
+			environ: []string{"DFM_HTTP_ADDR=", "DFM_DATABASE_URL=" + dbURL},
 			wantErr: `config: env: environment variable "DFM_HTTP_ADDR" should not be empty`,
 		},
 		{
+			name:    "missing database url",
+			environ: []string{"DFM_HTTP_ADDR=:8080"},
+			wantErr: `config: env: required environment variable "DFM_DATABASE_URL" is not set`,
+		},
+		{
 			name:    "invalid log level",
-			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_LOG_LEVEL=loud"},
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_LOG_LEVEL=loud", "DFM_DATABASE_URL=" + dbURL},
 			wantErr: `config: env: parse error on field "LogLevel" of type "slog.Level": slog: level string "loud": unknown name`,
 		},
 	}
@@ -67,6 +80,41 @@ func TestLoadErrors(t *testing.T) {
 			}
 			if err.Error() != tt.wantErr {
 				t.Errorf("Load() error = %q, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestLoadBase(t *testing.T) {
+	tests := []struct {
+		name    string
+		environ []string
+		want    config.Base
+		wantErr string
+	}{
+		{
+			name:    "no http address needed",
+			environ: []string{"DFM_DATABASE_URL=" + dbURL},
+			want:    config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
+		},
+		{
+			name:    "missing database url",
+			environ: []string{"DFM_HTTP_ADDR=:8080"},
+			wantErr: `config: env: required environment variable "DFM_DATABASE_URL" is not set`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := config.LoadBase(tt.environ)
+			gotErr := ""
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if gotErr != tt.wantErr {
+				t.Fatalf("LoadBase() error = %q, want %q", gotErr, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("LoadBase() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
