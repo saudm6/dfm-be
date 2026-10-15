@@ -2,27 +2,32 @@
 -- client_order_id is a UUIDv7 the client creates before submitting, so a
 -- retried submission finds the same row instead of creating a second order.
 -- uuid_extract_version is NULL for a UUID of another variant, nil included.
+-- quantity and limit_price change on a modify; created_quantity and
+-- created_limit_price keep the terms the order was created with, so a retried
+-- create is still recognised after a modify.
 CREATE TABLE orders (
-    client_order_id uuid PRIMARY KEY CHECK (coalesce(uuid_extract_version(client_order_id), 0) = 7),
-    symbol          text NOT NULL CHECK (symbol <> ''),
-    side            text NOT NULL CHECK (side IN ('buy', 'sell')),
-    quantity        numeric NOT NULL CHECK (quantity > 0),
-    limit_price     numeric CHECK (limit_price > 0),
-    state           text NOT NULL CHECK (state IN ('draft', 'submitted', 'working', 'part_filled', 'filled', 'cancelled', 'rejected')),
-    created_at      timestamptz NOT NULL,
-    updated_at      timestamptz NOT NULL
+    client_order_id     uuid PRIMARY KEY CHECK (coalesce(uuid_extract_version(client_order_id), 0) = 7),
+    symbol              text NOT NULL CHECK (symbol <> ''),
+    side                text NOT NULL CHECK (side IN ('buy', 'sell')),
+    quantity            numeric NOT NULL CHECK (quantity > 0),
+    limit_price         numeric CHECK (limit_price > 0),
+    created_quantity    numeric NOT NULL CHECK (created_quantity > 0),
+    created_limit_price numeric CHECK (created_limit_price > 0),
+    state               text NOT NULL CHECK (state IN ('draft', 'submitted', 'working', 'part_filled', 'filled', 'cancelled', 'rejected')),
+    created_at          timestamptz NOT NULL,
+    updated_at          timestamptz NOT NULL
 );
 
--- An order's terms are fixed once it is created; only its state and
--- updated_at change. Numerics compare as text so a change of scale is caught.
+-- An order's identity (id, symbol, side) and the record of its created terms
+-- never change. Numerics compare as text so a change of scale is caught.
 -- +goose StatementBegin
 CREATE FUNCTION orders_terms_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    IF (NEW.client_order_id, NEW.symbol, NEW.side, NEW.quantity::text, NEW.limit_price::text)
+    IF (NEW.client_order_id, NEW.symbol, NEW.side, NEW.created_quantity::text, NEW.created_limit_price::text)
         IS DISTINCT FROM
-       (OLD.client_order_id, OLD.symbol, OLD.side, OLD.quantity::text, OLD.limit_price::text) THEN
-        RAISE EXCEPTION 'orders terms are immutable: order % cannot change its id, symbol, side, quantity, or limit price', OLD.client_order_id
+       (OLD.client_order_id, OLD.symbol, OLD.side, OLD.created_quantity::text, OLD.created_limit_price::text) THEN
+        RAISE EXCEPTION 'orders terms are immutable: order % cannot change its id, symbol, side, or created terms', OLD.client_order_id
             USING ERRCODE = 'insufficient_privilege';
     END IF;
     RETURN NEW;

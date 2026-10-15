@@ -1,6 +1,6 @@
 -- name: InsertOrder :one
-INSERT INTO orders (client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+INSERT INTO orders (client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $4, $5, $6, $7, $7)
 ON CONFLICT (client_order_id) DO NOTHING
 RETURNING *;
 
@@ -12,6 +12,11 @@ SELECT * FROM orders WHERE client_order_id = $1 FOR UPDATE;
 
 -- name: SetOrderState :one
 UPDATE orders SET state = $2, updated_at = $3
+WHERE client_order_id = $1
+RETURNING *;
+
+-- name: ModifyOrder :one
+UPDATE orders SET quantity = $2, limit_price = $3, updated_at = $4
 WHERE client_order_id = $1
 RETURNING *;
 

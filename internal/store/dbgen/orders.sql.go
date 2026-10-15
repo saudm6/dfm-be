@@ -16,7 +16,7 @@ import (
 )
 
 const getOrder = `-- name: GetOrder :one
-SELECT client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at FROM orders WHERE client_order_id = $1
+SELECT client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at FROM orders WHERE client_order_id = $1
 `
 
 func (q *Queries) GetOrder(ctx context.Context, clientOrderID uuid.UUID) (Order, error) {
@@ -28,6 +28,8 @@ func (q *Queries) GetOrder(ctx context.Context, clientOrderID uuid.UUID) (Order,
 		&i.Side,
 		&i.Quantity,
 		&i.LimitPrice,
+		&i.CreatedQuantity,
+		&i.CreatedLimitPrice,
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -36,10 +38,10 @@ func (q *Queries) GetOrder(ctx context.Context, clientOrderID uuid.UUID) (Order,
 }
 
 const insertOrder = `-- name: InsertOrder :one
-INSERT INTO orders (client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+INSERT INTO orders (client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $4, $5, $6, $7, $7)
 ON CONFLICT (client_order_id) DO NOTHING
-RETURNING client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at
+RETURNING client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at
 `
 
 type InsertOrderParams struct {
@@ -69,6 +71,8 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (Order
 		&i.Side,
 		&i.Quantity,
 		&i.LimitPrice,
+		&i.CreatedQuantity,
+		&i.CreatedLimitPrice,
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -154,7 +158,7 @@ func (q *Queries) ListOrderEvents(ctx context.Context, clientOrderID uuid.UUID) 
 }
 
 const lockOrder = `-- name: LockOrder :one
-SELECT client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at FROM orders WHERE client_order_id = $1 FOR UPDATE
+SELECT client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at FROM orders WHERE client_order_id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockOrder(ctx context.Context, clientOrderID uuid.UUID) (Order, error) {
@@ -166,6 +170,44 @@ func (q *Queries) LockOrder(ctx context.Context, clientOrderID uuid.UUID) (Order
 		&i.Side,
 		&i.Quantity,
 		&i.LimitPrice,
+		&i.CreatedQuantity,
+		&i.CreatedLimitPrice,
+		&i.State,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const modifyOrder = `-- name: ModifyOrder :one
+UPDATE orders SET quantity = $2, limit_price = $3, updated_at = $4
+WHERE client_order_id = $1
+RETURNING client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at
+`
+
+type ModifyOrderParams struct {
+	ClientOrderID uuid.UUID
+	Quantity      decimal.Decimal
+	LimitPrice    decimal.NullDecimal
+	UpdatedAt     time.Time
+}
+
+func (q *Queries) ModifyOrder(ctx context.Context, arg ModifyOrderParams) (Order, error) {
+	row := q.db.QueryRow(ctx, modifyOrder,
+		arg.ClientOrderID,
+		arg.Quantity,
+		arg.LimitPrice,
+		arg.UpdatedAt,
+	)
+	var i Order
+	err := row.Scan(
+		&i.ClientOrderID,
+		&i.Symbol,
+		&i.Side,
+		&i.Quantity,
+		&i.LimitPrice,
+		&i.CreatedQuantity,
+		&i.CreatedLimitPrice,
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -176,7 +218,7 @@ func (q *Queries) LockOrder(ctx context.Context, clientOrderID uuid.UUID) (Order
 const setOrderState = `-- name: SetOrderState :one
 UPDATE orders SET state = $2, updated_at = $3
 WHERE client_order_id = $1
-RETURNING client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at
+RETURNING client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at
 `
 
 type SetOrderStateParams struct {
@@ -194,6 +236,8 @@ func (q *Queries) SetOrderState(ctx context.Context, arg SetOrderStateParams) (O
 		&i.Side,
 		&i.Quantity,
 		&i.LimitPrice,
+		&i.CreatedQuantity,
+		&i.CreatedLimitPrice,
 		&i.State,
 		&i.CreatedAt,
 		&i.UpdatedAt,

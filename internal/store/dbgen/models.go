@@ -14,14 +14,16 @@ import (
 )
 
 type Order struct {
-	ClientOrderID uuid.UUID
-	Symbol        domain.Symbol
-	Side          domain.Side
-	Quantity      decimal.Decimal
-	LimitPrice    decimal.NullDecimal
-	State         domain.OrderState
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ClientOrderID     uuid.UUID
+	Symbol            domain.Symbol
+	Side              domain.Side
+	Quantity          decimal.Decimal
+	LimitPrice        decimal.NullDecimal
+	CreatedQuantity   decimal.Decimal
+	CreatedLimitPrice decimal.NullDecimal
+	State             domain.OrderState
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type OrderEvent struct {

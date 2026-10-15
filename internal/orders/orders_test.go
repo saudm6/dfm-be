@@ -446,6 +446,8 @@ func TestUnknownOrder(t *testing.T) {
 	checkNotFound(t, err, `orders: transition `+id+` to "submitted": order not found`)
 	_, err = s.Record(ctx, orderID, change(orders.SourceBroker, "status"))
 	checkNotFound(t, err, "orders: record on "+id+": order not found")
+	_, err = s.Modify(ctx, orderID, decimal.RequireFromString("1"), decimal.Zero, change(orders.SourceUser, "modify"))
+	checkNotFound(t, err, "orders: modify "+id+": order not found")
 
 	events, err := s.Events(ctx, orderID)
 	if err != nil || len(events) != 0 {
@@ -588,8 +590,8 @@ func TestOrdersRejectsIDsThatAreNotUUIDv7(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := pool.Exec(t.Context(), `INSERT INTO orders (client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at)
-				VALUES ($1, 'EMAAR', 'buy', 1000, 14.25, 'draft', now(), now())`, tt.id)
+			_, err := pool.Exec(t.Context(), `INSERT INTO orders (client_order_id, symbol, side, quantity, limit_price, created_quantity, created_limit_price, state, created_at, updated_at)
+				VALUES ($1, 'EMAAR', 'buy', 1000, 14.25, 1000, 14.25, 'draft', now(), now())`, tt.id)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("INSERT %s error = %v, want nil", tt.id, err)
@@ -603,13 +605,13 @@ func TestOrdersRejectsIDsThatAreNotUUIDv7(t *testing.T) {
 	}
 }
 
-func TestOrderTermsAreImmutable(t *testing.T) {
+func TestOrderIdentityIsImmutable(t *testing.T) {
 	s, pool := newStore(t)
 	ctx := t.Context()
 	if _, _, err := s.Create(ctx, emaarBuy(orderID), userCreate); err != nil {
 		t.Fatal(err)
 	}
-	const wantErr = "ERROR: orders terms are immutable: order 0199e7a4-9c3b-7d4e-8f00-000000000001 cannot change its id, symbol, side, quantity, or limit price (SQLSTATE 42501)"
+	const wantErr = "ERROR: orders terms are immutable: order 0199e7a4-9c3b-7d4e-8f00-000000000001 cannot change its id, symbol, side, or created terms (SQLSTATE 42501)"
 	tests := []struct {
 		name string
 		set  string
@@ -617,11 +619,11 @@ func TestOrderTermsAreImmutable(t *testing.T) {
 		{name: "id", set: "client_order_id = '0199e7a4-9c3b-7d4e-8f00-000000000002'"},
 		{name: "symbol", set: "symbol = 'DEWA'"},
 		{name: "side", set: "side = 'sell'"},
-		{name: "quantity", set: "quantity = 1001"},
-		{name: "quantity scale", set: "quantity = 1000.00"},
-		{name: "limit price", set: "limit_price = 14.26"},
-		{name: "limit price to market", set: "limit_price = NULL"},
-		{name: "terms with state", set: "quantity = 1, state = 'submitted'"},
+		{name: "created quantity", set: "created_quantity = 1001"},
+		{name: "created quantity scale", set: "created_quantity = 1000.00"},
+		{name: "created limit price", set: "created_limit_price = 14.26"},
+		{name: "created limit price to market", set: "created_limit_price = NULL"},
+		{name: "side with state", set: "side = 'sell', state = 'submitted'"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -639,7 +641,188 @@ func TestOrderTermsAreImmutable(t *testing.T) {
 	want := emaarBuy(orderID)
 	want.State, want.CreatedAt, want.UpdatedAt = domain.Submitted, t0, t0.Add(time.Second)
 	sameOrder(t, got, want)
-	if got.Quantity.String() != "1000" {
-		t.Errorf("Quantity = %s, want 1000", got.Quantity)
+}
+
+func TestModifyWorkingOrder(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := t.Context()
+	if _, _, err := s.Create(ctx, emaarBuy(orderID), userCreate); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []domain.OrderState{domain.Submitted, domain.Working} {
+		if _, err := s.Transition(ctx, orderID, step, change(orders.SourceBroker, "status")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.Modify(ctx, orderID, decimal.RequireFromString("1500"), decimal.RequireFromString("14.10"), change(orders.SourceUser, "modify"))
+	if err != nil {
+		t.Fatalf("Modify() error = %v", err)
+	}
+
+	want := emaarBuy(orderID)
+	want.Quantity, want.LimitPrice = decimal.RequireFromString("1500"), decimal.RequireFromString("14.10")
+	want.State, want.CreatedAt, want.UpdatedAt = domain.Working, t0, t0.Add(3*time.Second)
+	sameOrder(t, got, want)
+	stored, err := s.Get(ctx, orderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameOrder(t, stored, want)
+	events := eventsOf(t, s, orderID)
+	wantLast := orders.Event{
+		Source:     "user",
+		Action:     "modify",
+		Detail:     json.RawMessage(`{"new": {"quantity": "1500", "limit_price": "14.1"}, "old": {"quantity": "1000", "limit_price": "14.25"}}`),
+		RecordedAt: t0.Add(3 * time.Second),
+	}
+	if len(events) != 4 || !reflect.DeepEqual(events[3], wantLast) {
+		t.Errorf("Events() = %+v, want 4 events ending in %+v", events, wantLast)
+	}
+
+	retry := emaarBuy(orderID)
+	retry.Quantity = decimal.RequireFromString("1000.00")
+	again, created, err := s.Create(ctx, retry, userCreate)
+	if err != nil || created {
+		t.Fatalf("retried Create() after Modify = created %v, error %v, want false and nil", created, err)
+	}
+	sameOrder(t, again, want)
+	modified := emaarBuy(orderID)
+	modified.Quantity, modified.LimitPrice = want.Quantity, want.LimitPrice
+	if _, _, err := s.Create(ctx, modified, userCreate); !errors.Is(err, orders.ErrIDReused) {
+		t.Errorf("Create() with the modified terms error = %v, want ErrIDReused", err)
+	}
+	if n := len(eventsOf(t, s, orderID)); n != 4 {
+		t.Errorf("Events() after retried creates has %d rows, want 4", n)
+	}
+}
+
+func TestModifyDetail(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := t.Context()
+	if _, _, err := s.Create(ctx, emaarBuy(orderID), userCreate); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.Modify(ctx, orderID, decimal.RequireFromString("1000"), decimal.Zero, orders.Change{
+		Source: orders.SourceUser,
+		Action: "modify",
+		Detail: json.RawMessage(`{"reason":"go to market"}`),
+		Raw:    "make it a market order",
+	})
+	if err != nil {
+		t.Fatalf("Modify() error = %v", err)
+	}
+
+	got, err := s.Get(ctx, orderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LimitPrice.IsZero() {
+		t.Errorf("LimitPrice = %s, want 0 (market)", got.LimitPrice)
+	}
+	events := eventsOf(t, s, orderID)
+	want := orders.Event{
+		Source:     "user",
+		Action:     "modify",
+		Detail:     json.RawMessage(`{"new": {"quantity": "1000", "limit_price": null}, "old": {"quantity": "1000", "limit_price": "14.25"}, "detail": {"reason": "go to market"}}`),
+		Raw:        "make it a market order",
+		RecordedAt: t0.Add(time.Second),
+	}
+	if len(events) != 2 || !reflect.DeepEqual(events[1], want) {
+		t.Errorf("Events() = %+v, want 2 events ending in %+v", events, want)
+	}
+}
+
+// TestModifyByState modifies an order in each state: open orders change, and
+// terminal ones fail and keep their terms and audit log.
+func TestModifyByState(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := t.Context()
+	for _, state := range domain.OrderStates() {
+		t.Run(string(state), func(t *testing.T) {
+			id, err := orders.NewID()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := s.Create(ctx, emaarBuy(id), userCreate); err != nil {
+				t.Fatal(err)
+			}
+			for _, step := range pathTo[state] {
+				if _, err := s.Transition(ctx, id, step, change(orders.SourceSystem, "setup")); err != nil {
+					t.Fatalf("setup Transition(%q) error = %v", step, err)
+				}
+			}
+			before, err := s.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			eventsBefore := len(eventsOf(t, s, id))
+
+			got, err := s.Modify(ctx, id, decimal.RequireFromString("900"), decimal.RequireFromString("14.20"), change(orders.SourceUser, "modify"))
+
+			if !state.Terminal() {
+				if err != nil {
+					t.Fatalf("Modify() error = %v", err)
+				}
+				if got.State != state || !got.Quantity.Equal(decimal.RequireFromString("900")) {
+					t.Errorf("Modify() = %+v, want state %q and quantity 900", got, state)
+				}
+				if n := len(eventsOf(t, s, id)); n != eventsBefore+1 {
+					t.Errorf("%d events after Modify, want %d", n, eventsBefore+1)
+				}
+				return
+			}
+			wantErr := fmt.Sprintf("orders: modify %s: order is not modifiable: state %q is terminal", id, state)
+			if err == nil || err.Error() != wantErr {
+				t.Fatalf("Modify() error = %v, want %q", err, wantErr)
+			}
+			if !errors.Is(err, orders.ErrNotModifiable) {
+				t.Errorf("errors.Is(%v, ErrNotModifiable) = false, want true", err)
+			}
+			after, err := s.Get(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sameOrder(t, after, before)
+			if n := len(eventsOf(t, s, id)); n != eventsBefore {
+				t.Errorf("%d events after a rejected Modify, want %d", n, eventsBefore)
+			}
+		})
+	}
+}
+
+func TestModifyValidates(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := t.Context()
+	if _, _, err := s.Create(ctx, emaarBuy(orderID), userCreate); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name            string
+		quantity, limit string
+		change          orders.Change
+		wantErr         string
+	}{
+		{name: "zero quantity", quantity: "0", limit: "14.25", change: change(orders.SourceUser, "modify"),
+			wantErr: "orders: invalid order: quantity 0 is not positive"},
+		{name: "negative limit", quantity: "1000", limit: "-1", change: change(orders.SourceUser, "modify"),
+			wantErr: "orders: invalid order: limit price -1 is negative"},
+		{name: "action", quantity: "1000", limit: "14.25", change: orders.Change{Source: orders.SourceUser},
+			wantErr: "orders: invalid change: action is missing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.Modify(ctx, orderID, decimal.RequireFromString(tt.quantity), decimal.RequireFromString(tt.limit), tt.change)
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("Modify() error = %v, want %q", err, tt.wantErr)
+			}
+			if !errors.Is(err, domain.ErrInvalid) {
+				t.Errorf("errors.Is(%v, ErrInvalid) = false, want true", err)
+			}
+		})
+	}
+	if n := len(eventsOf(t, s, orderID)); n != 1 {
+		t.Errorf("Events() has %d rows after rejected modifies, want 1", n)
 	}
 }

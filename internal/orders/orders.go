@@ -6,11 +6,12 @@
 //
 // Store.Transition is the only way to change an order's state. It applies the
 // transition table in package domain and appends an order_events row in the
-// same transaction as the state change. Store.Record appends a row for a broker
-// message or user action that leaves the state alone. order_events is the
+// same transaction as the state change. Store.Modify changes an open order's
+// quantity and limit price the same way. Store.Record appends a row for a
+// broker message or user action that changes nothing else. order_events is the
 // record of truth for an order's history: the database rejects UPDATE, DELETE,
-// and TRUNCATE on it. The database also rejects any change to an order's terms
-// (ID, symbol, side, quantity, limit price) after Create.
+// and TRUNCATE on it. The database also rejects any change to an order's ID,
+// symbol, or side after Create.
 package orders
 
 import (
@@ -36,6 +37,8 @@ var (
 	// ErrIDReused is returned by Create when the client order ID already
 	// belongs to an order with different terms.
 	ErrIDReused = errors.New("client order ID belongs to a different order")
+	// ErrNotModifiable is returned by Modify for an order in a terminal state.
+	ErrNotModifiable = errors.New("order is not modifiable")
 )
 
 // NewID returns a new client order ID.
@@ -115,10 +118,10 @@ func NewStore(pool *pgxpool.Pool, now func() time.Time) *Store {
 
 // Create stores o as a new draft order, ignoring o.State and the timestamps,
 // and records c as the order's first event. It returns the stored order and
-// whether this call created it. When an order with o.ID already exists with
-// the same symbol, side, quantity, and limit price, Create returns that order
-// unchanged with created false, so retries are safe. When the terms differ it
-// returns ErrIDReused.
+// whether this call created it. When an order with o.ID already exists and was
+// created with the same symbol, side, quantity, and limit price, Create returns
+// that order as it is now with created false, so retries are safe even after a
+// Modify. When the terms differ it returns ErrIDReused.
 func (s *Store) Create(ctx context.Context, o Order, c Change) (stored Order, created bool, err error) {
 	if err := validate(o); err != nil {
 		return Order{}, false, err
@@ -134,7 +137,7 @@ func (s *Store) Create(ctx context.Context, o Order, c Change) (stored Order, cr
 			Symbol:        o.Symbol,
 			Side:          o.Side,
 			Quantity:      o.Quantity,
-			LimitPrice:    decimal.NullDecimal{Decimal: o.LimitPrice, Valid: !o.LimitPrice.IsZero()},
+			LimitPrice:    nullDecimal(o.LimitPrice),
 			State:         domain.Draft,
 			CreatedAt:     now,
 		})
@@ -144,7 +147,7 @@ func (s *Store) Create(ctx context.Context, o Order, c Change) (stored Order, cr
 				return err
 			}
 			stored = fromRow(existing)
-			if !sameTerms(stored, o) {
+			if !createdWith(existing, o) {
 				return fmt.Errorf("%w: %s", ErrIDReused, o.ID)
 			}
 			return nil
@@ -195,6 +198,76 @@ func (s *Store) Transition(ctx context.Context, id uuid.UUID, to domain.OrderSta
 		return Order{}, fmt.Errorf("orders: transition %s to %q: %w", id, to, err)
 	}
 	return updated, nil
+}
+
+// Modify sets the quantity and limit price of order id, and records c as the
+// event that did so. Its detail holds the old and new terms, with c.Detail, if
+// any, under "detail". The state is unchanged. A zero limitPrice makes the order
+// a market order. An order in a terminal state returns an error wrapping
+// ErrNotModifiable and changes nothing.
+func (s *Store) Modify(ctx context.Context, id uuid.UUID, quantity, limitPrice decimal.Decimal, c Change) (Order, error) {
+	if err := validateTerms(quantity, limitPrice); err != nil {
+		return Order{}, err
+	}
+	if err := validateChange(c); err != nil {
+		return Order{}, err
+	}
+	var updated Order
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := dbgen.New(tx)
+		row, err := lock(ctx, q, id)
+		if err != nil {
+			return err
+		}
+		if row.State.Terminal() {
+			return fmt.Errorf("%w: state %q is terminal", ErrNotModifiable, row.State)
+		}
+		now := s.now()
+		next, err := q.ModifyOrder(ctx, dbgen.ModifyOrderParams{
+			ClientOrderID: id,
+			Quantity:      quantity,
+			LimitPrice:    nullDecimal(limitPrice),
+			UpdatedAt:     now,
+		})
+		if err != nil {
+			return err
+		}
+		updated = fromRow(next)
+		detail, err := json.Marshal(modifyDetail{
+			Old:    termsOf(fromRow(row)),
+			New:    termsOf(updated),
+			Detail: c.Detail,
+		})
+		if err != nil {
+			return err
+		}
+		c.Detail = detail
+		_, err = insertEvent(ctx, q, id, "", "", c, now)
+		return err
+	})
+	if err != nil {
+		return Order{}, fmt.Errorf("orders: modify %s: %w", id, err)
+	}
+	return updated, nil
+}
+
+type terms struct {
+	Quantity   decimal.Decimal  `json:"quantity"`
+	LimitPrice *decimal.Decimal `json:"limit_price"` // null for a market order
+}
+
+func termsOf(o Order) terms {
+	t := terms{Quantity: o.Quantity}
+	if !o.LimitPrice.IsZero() {
+		t.LimitPrice = &o.LimitPrice
+	}
+	return t
+}
+
+type modifyDetail struct {
+	Old    terms           `json:"old"`
+	New    terms           `json:"new"`
+	Detail json.RawMessage `json:"detail,omitempty"`
 }
 
 // Record appends c to the audit log of order id without changing its state.
@@ -275,6 +348,10 @@ func insertEvent(ctx context.Context, q *dbgen.Queries, id uuid.UUID, from, to d
 	return eventFromRow(row), nil
 }
 
+func nullDecimal(d decimal.Decimal) decimal.NullDecimal {
+	return decimal.NullDecimal{Decimal: d, Valid: !d.IsZero()}
+}
+
 func optionalText(s string) pgtype.Text { return pgtype.Text{String: s, Valid: s != ""} }
 
 func fromRow(r dbgen.Order) Order {
@@ -304,9 +381,10 @@ func eventFromRow(r dbgen.OrderEvent) Event {
 	}
 }
 
-func sameTerms(a, b Order) bool {
-	return a.Symbol == b.Symbol && a.Side == b.Side &&
-		a.Quantity.Equal(b.Quantity) && a.LimitPrice.Equal(b.LimitPrice)
+// createdWith reports whether r was created with the terms of o.
+func createdWith(r dbgen.Order, o Order) bool {
+	return r.Symbol == o.Symbol && r.Side == o.Side &&
+		r.CreatedQuantity.Equal(o.Quantity) && r.CreatedLimitPrice.Decimal.Equal(o.LimitPrice)
 }
 
 func validate(o Order) error {
@@ -320,10 +398,19 @@ func validate(o Order) error {
 		return fail("symbol %q is not a trading code", o.Symbol)
 	case !o.Side.Valid():
 		return fail("unknown side %q", o.Side)
-	case !o.Quantity.IsPositive():
-		return fail("quantity %s is not positive", o.Quantity)
-	case o.LimitPrice.IsNegative():
-		return fail("limit price %s is negative", o.LimitPrice)
+	}
+	return validateTerms(o.Quantity, o.LimitPrice)
+}
+
+func validateTerms(quantity, limitPrice decimal.Decimal) error {
+	fail := func(format string, args ...any) error {
+		return fmt.Errorf("orders: %w order: %s", domain.ErrInvalid, fmt.Sprintf(format, args...))
+	}
+	switch {
+	case !quantity.IsPositive():
+		return fail("quantity %s is not positive", quantity)
+	case limitPrice.IsNegative():
+		return fail("limit price %s is negative", limitPrice)
 	}
 	return nil
 }
