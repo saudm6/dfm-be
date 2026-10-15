@@ -43,11 +43,11 @@ func TestSpecEnumsMatchDomain(t *testing.T) {
 		parse  func(string) error
 	}{
 		{"Exchange", []string{"DFM", "NASDAQ_DUBAI"}, parser(domain.ParseExchange)},
-		{"Currency", []string{"AED", "USD"}, parser(domain.ParseCurrency)},
+		{"Currency", []string{"AED", "USD", "EUR", "GBP", "CNY", "AUD", "HKD", "NZD"}, parser(domain.ParseCurrency)},
 		{"Freshness", []string{"realtime", "delayed", "eod"}, parser(domain.ParseFreshness)},
 		{"Source", []string{"ibkr", "dfm-mw", "dfm-history", "self-recorded"}, parser(domain.ParseSource)},
 		{"Interval", []string{"1m", "1d"}, parser(domain.ParseInterval)},
-		{"InstrumentClass", []string{"equity", "etf", "reit", "fund", "bond", "sukuk", "future"}, parser(domain.ParseInstrumentClass)},
+		{"InstrumentClass", []string{"equity", "etf", "reit", "fund", "bond", "sukuk", "future", "index"}, parser(domain.ParseInstrumentClass)},
 		{"InstrumentStatus", []string{"listed", "suspended", "delisted", "matured"}, parser(domain.ParseInstrumentStatus)},
 		{"Role", []string{"owner", "member"}, parser(auth.ParseRole)},
 		{"MarketSession", []string{"pre-open", "continuous", "closing-auction", "closed"}, parser(calendar.ParseSession)},

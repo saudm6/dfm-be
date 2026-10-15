@@ -60,8 +60,12 @@ func TestNewInstrument(t *testing.T) {
 			wantErr: `domain: invalid instrument: English name is missing`},
 		{name: "unknown class", edit: func(in *domain.Instrument) { in.Class = "Equities" },
 			wantErr: `domain: invalid instrument: unknown class "Equities"`},
-		{name: "unknown currency", edit: func(in *domain.Instrument) { in.Currency = "EUR" },
-			wantErr: `domain: invalid instrument: unknown currency "EUR"`},
+		{name: "sukuk in EUR", edit: func(in *domain.Instrument) {
+			in.Class, in.Currency = domain.ClassSukuk, domain.CurrencyEUR
+		}},
+		{name: "index", edit: func(in *domain.Instrument) { in.Class = domain.ClassIndex }},
+		{name: "unknown currency", edit: func(in *domain.Instrument) { in.Currency = "JPY" },
+			wantErr: `domain: invalid instrument: unknown currency "JPY"`},
 		{name: "unknown status", edit: func(in *domain.Instrument) { in.Status = "S" },
 			wantErr: `domain: invalid instrument: unknown status "S"`},
 	}

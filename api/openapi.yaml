@@ -580,7 +580,7 @@ components:
 
     Currency:
       type: string
-      enum: [AED, USD]
+      enum: [AED, USD, EUR, GBP, CNY, AUD, HKD, NZD]
       x-go-type: domain.Currency
       x-go-type-import:
         path: github.com/saudm6/dfm-be/internal/domain
@@ -613,7 +613,7 @@ components:
 
     InstrumentClass:
       type: string
-      enum: [equity, etf, reit, fund, bond, sukuk, future]
+      enum: [equity, etf, reit, fund, bond, sukuk, future, index]
       x-go-type: domain.InstrumentClass
       x-go-type-import:
         path: github.com/saudm6/dfm-be/internal/domain
