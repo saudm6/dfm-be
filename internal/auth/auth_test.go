@@ -275,6 +275,104 @@ func TestSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestRevalidate(t *testing.T) {
+	pool := storetest.NewPool(t)
+	c := &clock{now: time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)}
+	svc := auth.NewService(pool, auth.Options{IdleTimeout: time.Hour, MaxAge: 8 * time.Hour, Now: c.Now})
+	if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Owner); err != nil {
+		t.Fatal(err)
+	}
+	sess, cookie, err := svc.Login(t.Context(), "saud", "correct horse battery", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromRequest, err := svc.UserFromRequest(requestWith(cookie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ID() == "" || fromRequest.ID() != sess.ID() {
+		t.Errorf("ID() = %q from login and %q from the cookie, want the same non-empty ID", sess.ID(), fromRequest.ID())
+	}
+
+	if _, err := pool.Exec(t.Context(), "UPDATE users SET role = 'member'"); err != nil {
+		t.Fatal(err)
+	}
+	c.Advance(50 * time.Minute)
+	got, err := svc.Revalidate(t.Context(), sess)
+	if err != nil {
+		t.Fatalf("Revalidate() error = %v", err)
+	}
+	if want := (auth.User{ID: 1, Username: "saud", Role: auth.Member}); got.User != want || got.CSRFToken != sess.CSRFToken || got.ID() != sess.ID() {
+		t.Errorf("Revalidate() = %+v, want user %+v with the same CSRF token and ID", got, want)
+	}
+
+	// Revalidate counted as activity, so the session outlives its first
+	// idle deadline.
+	c.Advance(50 * time.Minute)
+	if _, err := svc.UserFromRequest(requestWith(cookie)); err != nil {
+		t.Errorf("UserFromRequest() 100 minutes after login error = %v, want a live session", err)
+	}
+
+	c.Advance(time.Hour)
+	if _, err := svc.Revalidate(t.Context(), sess); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("Revalidate() after the idle timeout error = %v, want %v", err, auth.ErrUnauthenticated)
+	}
+	if _, err := svc.Revalidate(t.Context(), auth.Session{}); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("Revalidate() of a zero Session error = %v, want %v", err, auth.ErrUnauthenticated)
+	}
+}
+
+func TestRevalidateExpiryAndLogout(t *testing.T) {
+	tests := []struct {
+		name string
+		// steps advance the clock before each Revalidate; the last call's
+		// outcome is checked.
+		steps    []time.Duration
+		logout   bool
+		wantLive bool
+	}{
+		{"just inside idle timeout", []time.Duration{59 * time.Minute}, false, true},
+		{"idle timeout reached", []time.Duration{time.Hour}, false, false},
+		{"absolute expiry despite revalidation", []time.Duration{
+			50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 50 * time.Minute,
+			50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 30 * time.Minute,
+		}, false, false},
+		{"just inside absolute expiry", []time.Duration{
+			50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 50 * time.Minute,
+			50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 50 * time.Minute, 29 * time.Minute,
+		}, false, true},
+		{"logged out", []time.Duration{time.Minute}, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, c := newService(t)
+			if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Owner); err != nil {
+				t.Fatal(err)
+			}
+			sess, _, err := svc.Login(t.Context(), "saud", "correct horse battery", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.logout {
+				if _, err := svc.Logout(t.Context(), sess); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var lastErr error
+			for _, d := range tt.steps {
+				c.Advance(d)
+				_, lastErr = svc.Revalidate(t.Context(), sess)
+			}
+			if tt.wantLive && lastErr != nil {
+				t.Errorf("Revalidate() error = %v, want a live session", lastErr)
+			}
+			if !tt.wantLive && !errors.Is(lastErr, auth.ErrUnauthenticated) {
+				t.Errorf("Revalidate() error = %v, want %v", lastErr, auth.ErrUnauthenticated)
+			}
+		})
+	}
+}
+
 func TestLoginDeletesExpiredSessions(t *testing.T) {
 	pool := storetest.NewPool(t)
 	c := &clock{now: time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)}

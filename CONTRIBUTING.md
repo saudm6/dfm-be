@@ -82,10 +82,34 @@ generated client sends the cookie.
   generated code puts them.
 - Responses that carry the CSRF token (POST /auth/login, GET /me) declare
   the `NoStore` header and send `Cache-Control: no-store`.
+- A path must not differ from a public operation's path only by a trailing
+  `/` (`api.TestSpecPublicOperations`).
 
 Handlers read the signed-in user with `auth.SessionFromContext(ctx)`. Code
 outside the generated routes, such as the `/ws` upgrade, calls
-`(*auth.Service).UserFromRequest(r)` and `auth.RequireMarketData(ctx)`.
+`(*auth.Service).UserFromRequest(r)` and checks the role itself (the
+gateway checks `Role.MarketData()` per topic).
+
+An open WebSocket is activity too. Every 20 seconds the gateway calls
+`(*auth.Service).Revalidate(ctx, sess)`, which applies the same idle and
+absolute expiry as a request and extends the idle expiry; the socket thus
+keeps its session alive up to the maximum age. A session that has ended
+closes its sockets with status 4401, and `POST /auth/logout` closes them at
+once through `(*ws.Gateway).EndSession`. Each check rereads the role and
+drops the topics the role may no longer read.
+
+### Live topics
+
+`GET /ws` is served by the gateway in `internal/ws` and speaks
+[api/websocket.md](api/websocket.md). `ws.Topics` lists every topic with its
+delivery mode and access; a new topic goes there and in the doc's topic
+table. Feed a topic with `gateway.Publish("quote:EMAAR", payload)`, or
+bridge a bus topic in `cmd/dfm` with
+`ws.Forward(ctx, gateway, bus, bus.QuoteUpdated, "quote", buffer, route)`,
+which also sends clients a `resync` when the bus drops events. Payloads of
+`every` topics carry an `id`. A topic whose keys belong to some users only
+(a chat room, a direct message) sets `Topic.Allow`, a per-key check run on
+each subscribe and each session check.
 
 ### Errors
 

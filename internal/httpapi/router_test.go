@@ -7,10 +7,14 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/saudm6/dfm-be/internal/httpapi"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
@@ -22,7 +26,7 @@ type fakeDB struct{ err error }
 func (f fakeDB) Ping(context.Context) error { return f.err }
 
 func newRouter(logger *slog.Logger, db fakeDB) http.Handler {
-	return httpapi.NewRouter(logger, db, fakeCalendars{}, at(thursday), nil, nil)
+	return httpapi.NewRouter(logger, db, fakeCalendars{}, at(thursday), nil, nil, nil)
 }
 
 func TestRouter(t *testing.T) {
@@ -264,4 +268,99 @@ func TestRouterPanicSendsErrorBody(t *testing.T) {
 	if line.Stack == "" {
 		t.Error("stack missing from log line")
 	}
+}
+
+// chi routes on the escaped path, so the Allow header must be computed on it
+// too: /bars/1m%2Fx matches /bars/{interval}, /bars/1m/x matches nothing.
+func TestMethodNotAllowedOnEscapedPath(t *testing.T) {
+	router := httpapi.NewParamTestRouter(slog.New(slog.DiscardHandler), securityServer{}, nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/bars/1m%2Fx", nil))
+
+	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET" {
+		t.Errorf("PUT /bars/1m%%2Fx = %d Allow %q, want 405 Allow %q", rec.Code, rec.Header().Get("Allow"), "GET")
+	}
+}
+
+// A handler that panics after sending its status gets its connection
+// aborted, so the client sees a broken response, not JSON appended to it.
+func TestPanicAfterPartialWriteAbortsResponse(t *testing.T) {
+	var logs bytes.Buffer
+	r := httpapi.NewBaseRouter(slog.New(slog.NewJSONHandler(&logs, nil)))
+	r.Get("/partial", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		_ = http.NewResponseController(w).Flush()
+		panic("boom")
+	})
+	srv, served := serveOnce(r)
+	defer srv.Close()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/partial", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+
+	if !errors.Is(err, io.ErrUnexpectedEOF) || string(body) != "partial" {
+		t.Errorf("body = %q, %v, want %q, %v", body, err, "partial", io.ErrUnexpectedEOF)
+	}
+	<-served
+	if !strings.Contains(logs.String(), `"msg":"http handler panicked","path":"/partial","panic":"boom"`) {
+		t.Errorf("logs = %s, want the panic logged", logs.String())
+	}
+}
+
+// A handler that panics after hijacking its connection gets the connection
+// closed; there is no HTTP response to write on it.
+func TestPanicAfterHijackClosesConnection(t *testing.T) {
+	var logs bytes.Buffer
+	r := httpapi.NewBaseRouter(slog.New(slog.NewJSONHandler(&logs, nil)))
+	r.Get("/hijack", func(w http.ResponseWriter, _ *http.Request) {
+		if _, _, err := http.NewResponseController(w).Hijack(); err != nil {
+			t.Error(err)
+		}
+		panic("boom")
+	})
+	srv, served := serveOnce(r)
+	defer srv.Close()
+	var d net.Dialer
+	conn, err := d.DialContext(t.Context(), "tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.Write([]byte("GET /hijack HTTP/1.1\r\nHost: test\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := io.ReadAll(conn)
+
+	if err != nil || len(got) != 0 {
+		t.Errorf("read = %q, %v, want the connection closed with nothing written", got, err)
+	}
+	<-served
+	if !strings.Contains(logs.String(), `"status":0,"bytes":0`) || !strings.Contains(logs.String(), `"hijacked":true`) {
+		t.Errorf("logs = %s, want an access log line with status 0 and hijacked", logs.String())
+	}
+}
+
+// serveOnce serves h and closes served once h has returned or panicked for
+// the first request, so its log lines are complete.
+func serveOnce(h http.Handler) (*httptest.Server, <-chan struct{}) {
+	served := make(chan struct{})
+	var once sync.Once
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer once.Do(func() { close(served) })
+		h.ServeHTTP(w, r)
+	})), served
 }

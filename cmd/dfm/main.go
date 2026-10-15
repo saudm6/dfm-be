@@ -41,6 +41,7 @@ import (
 	"github.com/saudm6/dfm-be/internal/httpapi"
 	"github.com/saudm6/dfm-be/internal/instruments"
 	"github.com/saudm6/dfm-be/internal/store"
+	"github.com/saudm6/dfm-be/internal/ws"
 )
 
 const (
@@ -266,12 +267,14 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	}
 	hours := cfg.Market.Hours()
 	cals := calendar.Loader{DB: pool, Hours: hours}
+	sessions := auth.NewService(pool, auth.Options{
+		IdleTimeout:    cfg.SessionIdleTimeout,
+		MaxAge:         cfg.SessionMaxAge,
+		InsecureCookie: !cfg.CookieSecure,
+	})
+	gateway := ws.New(logger, ws.Topics, sessions, ws.Options{})
 	srv := &http.Server{
-		Handler: httpapi.NewRouter(logger, pool, cals, clock, auth.NewService(pool, auth.Options{
-			IdleTimeout:    cfg.SessionIdleTimeout,
-			MaxAge:         cfg.SessionMaxAge,
-			InsecureCookie: !cfg.CookieSecure,
-		}), documents.NewStore(pool, clock)),
+		Handler:           httpapi.NewRouter(logger, pool, cals, clock, sessions, documents.NewStore(pool, clock), gateway),
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
@@ -285,7 +288,11 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 		},
 	}
 	logger.Info("http server listening", "addr", ln.Addr().String())
-	return runServer(ctx, logger, srv, ln, jobs)
+	err = runServer(ctx, logger, srv, ln, jobs)
+	// Shutdown does not wait for hijacked connections, so the gateway
+	// closes its WebSockets itself.
+	gateway.Close()
+	return err
 }
 
 // job is a background task of the server. Run returns nil once ctx is

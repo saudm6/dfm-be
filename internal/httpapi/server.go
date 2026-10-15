@@ -18,6 +18,7 @@ import (
 	"github.com/saudm6/dfm-be/internal/documents"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
+	"github.com/saudm6/dfm-be/internal/ws"
 )
 
 // server implements every operation in api/openapi.yaml. Each feature puts
@@ -30,6 +31,7 @@ type server struct {
 	now      func() time.Time
 	sessions *auth.Service
 	docs     *documents.Store
+	gateway  *ws.Gateway
 }
 
 var _ gen.StrictServerInterface = server{}

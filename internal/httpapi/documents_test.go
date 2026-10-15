@@ -86,7 +86,7 @@ func (c docClient) expect(r docRequest, want docResponse) {
 func newDocumentServer(t *testing.T) (*httptest.Server, authFixture) {
 	t.Helper()
 	f := newAuthFixture(t)
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, documents.NewStore(f.pool, f.clock.Now)))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, documents.NewStore(f.pool, f.clock.Now), nil))
 	t.Cleanup(srv.Close)
 	return srv, f
 }

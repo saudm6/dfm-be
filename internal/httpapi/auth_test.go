@@ -118,6 +118,15 @@ func send(t *testing.T, srv *httptest.Server, req *http.Request) response {
 	}
 }
 
+// otherToken returns token with its first character changed to another
+// base64url character, so it never equals token.
+func otherToken(token string) string {
+	if token[0] == 'A' {
+		return "B" + token[1:]
+	}
+	return "A" + token[1:]
+}
+
 // login signs in through POST /auth/login and returns the session cookie and
 // the CSRF token.
 func login(t *testing.T, srv *httptest.Server, username string) (*http.Cookie, string) {
@@ -141,7 +150,7 @@ func login(t *testing.T, srv *httptest.Server, username string) (*http.Cookie, s
 
 func TestLoginMeLogout(t *testing.T) {
 	f := newAuthFixture(t)
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 	defer srv.Close()
 
 	resp := call(t, srv, http.MethodPost, "/auth/login", nil, "", `{"username":"Saud","password":"`+password+`"}`)
@@ -183,7 +192,7 @@ func TestLoginMeLogout(t *testing.T) {
 		wantBody   string
 	}{
 		{"logout without CSRF token", "", http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
-		{"logout with wrong CSRF token", "x" + me.CSRFToken[1:], http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
+		{"logout with wrong CSRF token", otherToken(me.CSRFToken), http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
 	}
 	for _, tt := range tests {
 		got := call(t, srv, http.MethodPost, "/auth/logout", session, tt.csrf, "")
@@ -215,7 +224,7 @@ func TestLoginMeLogout(t *testing.T) {
 
 func TestLoginFailures(t *testing.T) {
 	f := newAuthFixture(t)
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 	defer srv.Close()
 	invalid := `{"code":"unauthorized","message":"invalid username or password"}` + "\n"
 	tests := []struct {
@@ -255,7 +264,7 @@ func TestLoginFailures(t *testing.T) {
 // input never reaches the password hash.
 func TestLoginRequestLimits(t *testing.T) {
 	f := newAuthFixture(t)
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 	defer srv.Close()
 	body := `{"username":"saud","password":"` + password + `"}`
 	unsupported := `{"code":"unsupported_media_type","message":"send the login request as application/json"}` + "\n"
@@ -307,7 +316,7 @@ func TestLoginRequestLimits(t *testing.T) {
 
 func TestLoginEndsSessionTheRequestCarried(t *testing.T) {
 	f := newAuthFixture(t)
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 	defer srv.Close()
 	old, _ := login(t, srv, "saud")
 
@@ -338,7 +347,7 @@ func TestLoginEndsSessionTheRequestCarried(t *testing.T) {
 
 func TestProtectedRouteRejectsMissingAndBadSessions(t *testing.T) {
 	f := newAuthFixture(t)
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 	defer srv.Close()
 	want := `{"code":"unauthorized","message":"sign in to use /me"}` + "\n"
 	tests := []struct {
@@ -378,7 +387,7 @@ func TestExpiredSessionGets401(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newAuthFixture(t)
-			srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+			srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 			defer srv.Close()
 			session, _ := login(t, srv, "amal")
 
@@ -401,7 +410,7 @@ func TestExpiredSessionGets401(t *testing.T) {
 func TestSessionLookupFailureIs500(t *testing.T) {
 	f := newAuthFixture(t)
 	var logs bytes.Buffer
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 	defer srv.Close()
 	session, _ := login(t, srv, "saud")
 	f.pool.Close()
@@ -429,6 +438,10 @@ func (securityServer) PostMessage(context.Context, paramtest.PostMessageRequestO
 	return paramtest.PostMessage204Response{}, nil
 }
 
+func (securityServer) PlaceOrderTrailingSlash(context.Context, paramtest.PlaceOrderTrailingSlashRequestObject) (paramtest.PlaceOrderTrailingSlashResponseObject, error) {
+	return paramtest.PlaceOrderTrailingSlash204Response{}, nil
+}
+
 func (securityServer) GetUnlisted(context.Context, paramtest.GetUnlistedRequestObject) (paramtest.GetUnlistedResponseObject, error) {
 	return paramtest.GetUnlisted204Response{}, nil
 }
@@ -439,7 +452,7 @@ func (securityServer) PostUnlisted(context.Context, paramtest.PostUnlistedReques
 
 func TestRolesOnMarketDataAndChatRoutes(t *testing.T) {
 	f := newAuthFixture(t)
-	accounts := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil))
+	accounts := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, nil))
 	defer accounts.Close()
 	srv := httptest.NewServer(httpapi.NewParamTestRouter(slog.New(slog.DiscardHandler), securityServer{}, f.sessions))
 	defer srv.Close()
@@ -469,6 +482,9 @@ func TestRolesOnMarketDataAndChatRoutes(t *testing.T) {
 		{"member calls an op with an empty requirement", http.MethodGet, "/unlisted", memberCookie, "", http.StatusNoContent, ""},
 		{"member calls a CSRF-only op", http.MethodPost, "/unlisted", memberCookie, memberCSRF, http.StatusNoContent, ""},
 		{"member calls a CSRF-only op without CSRF token", http.MethodPost, "/unlisted", memberCookie, "", http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
+		// POST /orders is public; POST /orders/ is not.
+		{"anonymous posts to a public path plus /", http.MethodPost, "/orders/", nil, "", http.StatusUnauthorized, `{"code":"unauthorized","message":"sign in to use /orders/"}` + "\n"},
+		{"member posts to a public path plus /", http.MethodPost, "/orders/", memberCookie, memberCSRF, http.StatusNoContent, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -64,6 +64,18 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /orders/:
+    post:
+      operationId: placeOrderTrailingSlash
+      description: |
+        A session-only operation at the public path /orders plus "/". The
+        router must not treat it as public.
+      responses:
+        "204":
+          description: Allowed.
+        default:
+          $ref: "#/components/responses/Error"
+
   /quotes:
     get:
       operationId: listQuotes
