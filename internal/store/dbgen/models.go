@@ -32,5 +32,6 @@ type OrderEvent struct {
 	FromState     pgtype.Text
 	ToState       pgtype.Text
 	Detail        []byte
+	RawMessage    pgtype.Text
 	RecordedAt    time.Time
 }

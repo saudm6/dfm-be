@@ -315,7 +315,7 @@ var pathTo = map[domain.OrderState][]domain.OrderState{
 }
 
 // TestStoreWalksTransitionTable tries every pair of states through the store:
-// the 14 legal transitions succeed and append an event, and each illegal one
+// the 15 legal transitions succeed and append an event, and each illegal one
 // fails and leaves the order and its audit log as they were.
 func TestStoreWalksTransitionTable(t *testing.T) {
 	s, _ := newStore(t)
@@ -375,7 +375,7 @@ func TestStoreWalksTransitionTable(t *testing.T) {
 	wantLegal := []string{
 		"draft->submitted", "draft->cancelled", "draft->rejected",
 		"submitted->working", "submitted->part_filled", "submitted->filled", "submitted->cancelled", "submitted->rejected",
-		"working->part_filled", "working->filled", "working->cancelled",
+		"working->part_filled", "working->filled", "working->cancelled", "working->rejected",
 		"part_filled->part_filled", "part_filled->filled", "part_filled->cancelled",
 	}
 	if !reflect.DeepEqual(legal, wantLegal) {
@@ -518,5 +518,128 @@ func TestOrderEventsIsAppendOnly(t *testing.T) {
 	}
 	if _, err := s.Get(ctx, orderID); err != nil {
 		t.Errorf("Get() after rejected writes error = %v", err)
+	}
+}
+
+func TestWorkingOrderRejectedKeepsRawMessage(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := t.Context()
+	if _, _, err := s.Create(ctx, emaarBuy(orderID), userCreate); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []domain.OrderState{domain.Submitted, domain.Working} {
+		if _, err := s.Transition(ctx, orderID, step, change(orders.SourceBroker, "status")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const reject = "Order rejected – Reason: price is outside the price band"
+	got, err := s.Transition(ctx, orderID, domain.Rejected, orders.Change{
+		Source: orders.SourceBroker,
+		Action: "reject",
+		Detail: json.RawMessage(`{"code":201}`),
+		Raw:    reject,
+	})
+	if err != nil {
+		t.Fatalf("Transition(working -> rejected) error = %v", err)
+	}
+	if got.State != domain.Rejected {
+		t.Errorf("Transition() state = %q, want %q", got.State, domain.Rejected)
+	}
+	const raw = `{"z":1,"a":2,"a":3}`
+	if _, err := s.Record(ctx, orderID, orders.Change{
+		Source: orders.SourceBroker,
+		Action: "status",
+		Detail: json.RawMessage(raw),
+		Raw:    raw,
+	}); err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+
+	events := eventsOf(t, s, orderID)
+	sec := func(n int) time.Time { return t0.Add(time.Duration(n) * time.Second) }
+	wantTail := []orders.Event{
+		{Source: "broker", Action: "reject", From: "working", To: "rejected", Detail: json.RawMessage(`{"code": 201}`), Raw: reject, RecordedAt: sec(3)},
+		{Source: "broker", Action: "status", Detail: json.RawMessage(`{"a": 3, "z": 1}`), Raw: raw, RecordedAt: sec(4)},
+	}
+	if len(events) != 5 || !reflect.DeepEqual(events[3:], wantTail) {
+		t.Errorf("Events() = %+v, want 5 events ending in %+v", events, wantTail)
+	}
+	for i, ev := range events[:3] {
+		if ev.Raw != "" {
+			t.Errorf("event %d Raw = %q, want empty", i, ev.Raw)
+		}
+	}
+}
+
+func TestOrdersRejectsIDsThatAreNotUUIDv7(t *testing.T) {
+	_, pool := newStore(t)
+	tests := []struct {
+		name    string
+		id      string
+		wantErr string
+	}{
+		{name: "nil", id: "00000000-0000-0000-0000-000000000000",
+			wantErr: `ERROR: new row for relation "orders" violates check constraint "orders_client_order_id_check" (SQLSTATE 23514)`},
+		{name: "version 7 nibble with NCS variant", id: "0199e7a4-9c3b-7d4e-0f00-000000000001",
+			wantErr: `ERROR: new row for relation "orders" violates check constraint "orders_client_order_id_check" (SQLSTATE 23514)`},
+		{name: "UUIDv4", id: "6f1c2c9e-3b0a-4d7e-9f00-000000000001",
+			wantErr: `ERROR: new row for relation "orders" violates check constraint "orders_client_order_id_check" (SQLSTATE 23514)`},
+		{name: "UUIDv7", id: "0199e7a4-9c3b-7d4e-8f00-000000000001"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := pool.Exec(t.Context(), `INSERT INTO orders (client_order_id, symbol, side, quantity, limit_price, state, created_at, updated_at)
+				VALUES ($1, 'EMAAR', 'buy', 1000, 14.25, 'draft', now(), now())`, tt.id)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("INSERT %s error = %v, want nil", tt.id, err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("INSERT %s error = %v, want %q", tt.id, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestOrderTermsAreImmutable(t *testing.T) {
+	s, pool := newStore(t)
+	ctx := t.Context()
+	if _, _, err := s.Create(ctx, emaarBuy(orderID), userCreate); err != nil {
+		t.Fatal(err)
+	}
+	const wantErr = "ERROR: orders terms are immutable: order 0199e7a4-9c3b-7d4e-8f00-000000000001 cannot change its id, symbol, side, quantity, or limit price (SQLSTATE 42501)"
+	tests := []struct {
+		name string
+		set  string
+	}{
+		{name: "id", set: "client_order_id = '0199e7a4-9c3b-7d4e-8f00-000000000002'"},
+		{name: "symbol", set: "symbol = 'DEWA'"},
+		{name: "side", set: "side = 'sell'"},
+		{name: "quantity", set: "quantity = 1001"},
+		{name: "quantity scale", set: "quantity = 1000.00"},
+		{name: "limit price", set: "limit_price = 14.26"},
+		{name: "limit price to market", set: "limit_price = NULL"},
+		{name: "terms with state", set: "quantity = 1, state = 'submitted'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := pool.Exec(ctx, "UPDATE orders SET "+tt.set)
+			if err == nil || err.Error() != wantErr {
+				t.Fatalf("UPDATE orders SET %s error = %v, want %q", tt.set, err, wantErr)
+			}
+		})
+	}
+
+	got, err := s.Transition(ctx, orderID, domain.Submitted, change(orders.SourceUser, "submit"))
+	if err != nil {
+		t.Fatalf("Transition() after rejected updates error = %v", err)
+	}
+	want := emaarBuy(orderID)
+	want.State, want.CreatedAt, want.UpdatedAt = domain.Submitted, t0, t0.Add(time.Second)
+	sameOrder(t, got, want)
+	if got.Quantity.String() != "1000" {
+		t.Errorf("Quantity = %s, want 1000", got.Quantity)
 	}
 }

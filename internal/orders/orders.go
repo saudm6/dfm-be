@@ -9,7 +9,8 @@
 // same transaction as the state change. Store.Record appends a row for a broker
 // message or user action that leaves the state alone. order_events is the
 // record of truth for an order's history: the database rejects UPDATE, DELETE,
-// and TRUNCATE on it.
+// and TRUNCATE on it. The database also rejects any change to an order's terms
+// (ID, symbol, side, quantity, limit price) after Create.
 package orders
 
 import (
@@ -76,7 +77,10 @@ func (s Source) Valid() bool {
 type Change struct {
 	Source Source
 	Action string          // a short verb, for example "submit", "fill", or "modify"
-	Detail json.RawMessage // optional JSON, for example the broker's message
+	Detail json.RawMessage // optional JSON, for example the fields of the broker's message
+	// Raw is the optional message as received, kept verbatim, for example an
+	// IBKR error text. Detail is stored as jsonb, which reorders its keys.
+	Raw string
 }
 
 // Event is one row of an order's audit log.
@@ -90,6 +94,7 @@ type Event struct {
 	Action     string
 	From, To   domain.OrderState
 	Detail     json.RawMessage
+	Raw        string
 	RecordedAt time.Time
 }
 
@@ -261,6 +266,7 @@ func insertEvent(ctx context.Context, q *dbgen.Queries, id uuid.UUID, from, to d
 		FromState:     optionalText(string(from)),
 		ToState:       optionalText(string(to)),
 		Detail:        detail,
+		RawMessage:    optionalText(c.Raw),
 		RecordedAt:    at,
 	})
 	if err != nil {
@@ -293,6 +299,7 @@ func eventFromRow(r dbgen.OrderEvent) Event {
 		From:       domain.OrderState(r.FromState.String),
 		To:         domain.OrderState(r.ToState.String),
 		Detail:     json.RawMessage(r.Detail),
+		Raw:        r.RawMessage.String,
 		RecordedAt: r.RecordedAt,
 	}
 }

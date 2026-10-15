@@ -25,13 +25,14 @@ var ErrIllegalTransition = errors.New("illegal order transition")
 
 // orderTransitions is the transition table: the states each state may move to.
 // A state missing from the table is terminal. PartFilled may move to itself
-// because each further partial fill is a transition. Rejected is reachable
-// only before the broker accepts the order; a working order that ends without
-// filling is Cancelled.
+// because each further partial fill is a transition. A broker may still reject
+// an order it has acknowledged (FIX OrdStatus New to Rejected; an IBKR order
+// going Inactive on a risk or exchange reject), so Working may move to
+// Rejected. An order with fills cannot be rejected.
 var orderTransitions = map[OrderState][]OrderState{
 	Draft:      {Submitted, Cancelled, Rejected},
 	Submitted:  {Working, PartFilled, Filled, Cancelled, Rejected},
-	Working:    {PartFilled, Filled, Cancelled},
+	Working:    {PartFilled, Filled, Cancelled, Rejected},
 	PartFilled: {PartFilled, Filled, Cancelled},
 }
 

@@ -16,8 +16,8 @@ WHERE client_order_id = $1
 RETURNING *;
 
 -- name: InsertOrderEvent :one
-INSERT INTO order_events (client_order_id, source, action, from_state, to_state, detail, recorded_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO order_events (client_order_id, source, action, from_state, to_state, detail, raw_message, recorded_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: ListOrderEvents :many

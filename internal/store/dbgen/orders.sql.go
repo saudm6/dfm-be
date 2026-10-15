@@ -77,9 +77,9 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (Order
 }
 
 const insertOrderEvent = `-- name: InsertOrderEvent :one
-INSERT INTO order_events (client_order_id, source, action, from_state, to_state, detail, recorded_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, client_order_id, source, action, from_state, to_state, detail, recorded_at
+INSERT INTO order_events (client_order_id, source, action, from_state, to_state, detail, raw_message, recorded_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, client_order_id, source, action, from_state, to_state, detail, raw_message, recorded_at
 `
 
 type InsertOrderEventParams struct {
@@ -89,6 +89,7 @@ type InsertOrderEventParams struct {
 	FromState     pgtype.Text
 	ToState       pgtype.Text
 	Detail        []byte
+	RawMessage    pgtype.Text
 	RecordedAt    time.Time
 }
 
@@ -100,6 +101,7 @@ func (q *Queries) InsertOrderEvent(ctx context.Context, arg InsertOrderEventPara
 		arg.FromState,
 		arg.ToState,
 		arg.Detail,
+		arg.RawMessage,
 		arg.RecordedAt,
 	)
 	var i OrderEvent
@@ -111,13 +113,14 @@ func (q *Queries) InsertOrderEvent(ctx context.Context, arg InsertOrderEventPara
 		&i.FromState,
 		&i.ToState,
 		&i.Detail,
+		&i.RawMessage,
 		&i.RecordedAt,
 	)
 	return i, err
 }
 
 const listOrderEvents = `-- name: ListOrderEvents :many
-SELECT id, client_order_id, source, action, from_state, to_state, detail, recorded_at FROM order_events WHERE client_order_id = $1 ORDER BY id
+SELECT id, client_order_id, source, action, from_state, to_state, detail, raw_message, recorded_at FROM order_events WHERE client_order_id = $1 ORDER BY id
 `
 
 func (q *Queries) ListOrderEvents(ctx context.Context, clientOrderID uuid.UUID) ([]OrderEvent, error) {
@@ -137,6 +140,7 @@ func (q *Queries) ListOrderEvents(ctx context.Context, clientOrderID uuid.UUID) 
 			&i.FromState,
 			&i.ToState,
 			&i.Detail,
+			&i.RawMessage,
 			&i.RecordedAt,
 		); err != nil {
 			return nil, err

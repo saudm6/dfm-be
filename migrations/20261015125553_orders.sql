@@ -1,8 +1,9 @@
 -- +goose Up
 -- client_order_id is a UUIDv7 the client creates before submitting, so a
 -- retried submission finds the same row instead of creating a second order.
+-- uuid_extract_version is NULL for a UUID of another variant, nil included.
 CREATE TABLE orders (
-    client_order_id uuid PRIMARY KEY CHECK (uuid_extract_version(client_order_id) = 7),
+    client_order_id uuid PRIMARY KEY CHECK (coalesce(uuid_extract_version(client_order_id), 0) = 7),
     symbol          text NOT NULL CHECK (symbol <> ''),
     side            text NOT NULL CHECK (side IN ('buy', 'sell')),
     quantity        numeric NOT NULL CHECK (quantity > 0),
@@ -12,10 +13,33 @@ CREATE TABLE orders (
     updated_at      timestamptz NOT NULL
 );
 
+-- An order's terms are fixed once it is created; only its state and
+-- updated_at change. Numerics compare as text so a change of scale is caught.
+-- +goose StatementBegin
+CREATE FUNCTION orders_terms_immutable() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF (NEW.client_order_id, NEW.symbol, NEW.side, NEW.quantity::text, NEW.limit_price::text)
+        IS DISTINCT FROM
+       (OLD.client_order_id, OLD.symbol, OLD.side, OLD.quantity::text, OLD.limit_price::text) THEN
+        RAISE EXCEPTION 'orders terms are immutable: order % cannot change its id, symbol, side, quantity, or limit price', OLD.client_order_id
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER orders_terms_immutable
+    BEFORE UPDATE ON orders
+    FOR EACH ROW EXECUTE FUNCTION orders_terms_immutable();
+
 -- order_events is the append-only audit log of every order and the record of
 -- truth for its history. to_state is set when the event changed the order's
 -- state (from_state is NULL only for the event that created the order); both
 -- are NULL for a broker message or user action that left the state alone.
+-- raw_message keeps the broker's or user's message verbatim, because jsonb
+-- reorders and deduplicates the keys of detail.
 CREATE TABLE order_events (
     id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     client_order_id uuid NOT NULL REFERENCES orders (client_order_id),
@@ -24,6 +48,7 @@ CREATE TABLE order_events (
     from_state      text CHECK (from_state IN ('draft', 'submitted', 'working', 'part_filled', 'filled', 'cancelled', 'rejected')),
     to_state        text CHECK (to_state IN ('draft', 'submitted', 'working', 'part_filled', 'filled', 'cancelled', 'rejected')),
     detail          jsonb NOT NULL DEFAULT '{}'::jsonb,
+    raw_message     text,
     recorded_at     timestamptz NOT NULL,
     CHECK (from_state IS NULL OR to_state IS NOT NULL)
 );
@@ -52,3 +77,4 @@ CREATE TRIGGER order_events_no_truncate
 DROP TABLE order_events;
 DROP FUNCTION order_events_append_only();
 DROP TABLE orders;
+DROP FUNCTION orders_terms_immutable();

@@ -24,6 +24,7 @@ var legal = map[[2]domain.OrderState]bool{
 	{"working", "part_filled"}:     true,
 	{"working", "filled"}:          true,
 	{"working", "cancelled"}:       true,
+	{"working", "rejected"}:        true,
 	{"part_filled", "part_filled"}: true,
 	{"part_filled", "filled"}:      true,
 	{"part_filled", "cancelled"}:   true,
@@ -72,8 +73,8 @@ func TestTransitionTable(t *testing.T) {
 			})
 		}
 	}
-	if legalSeen != 14 || illegalSeen != 35 {
-		t.Errorf("walked %d legal and %d illegal transitions, want 14 and 35", legalSeen, illegalSeen)
+	if legalSeen != 15 || illegalSeen != 34 {
+		t.Errorf("walked %d legal and %d illegal transitions, want 15 and 34", legalSeen, illegalSeen)
 	}
 }
 

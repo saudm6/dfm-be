@@ -30,8 +30,11 @@ func TestMigrateAppliesEveryMigrationOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Migrate() error = %v", err)
 	}
-	if want := []int64{20261015120000, 20261015125553}; !slices.Equal(first, want) {
+	if want := storetest.MigrationVersions(t); !slices.Equal(first, want) {
 		t.Errorf("first Migrate() applied %v, want %v", first, want)
+	}
+	if !slices.Contains(first, 20261015120000) {
+		t.Errorf("first Migrate() applied %v, want it to include 20261015120000 (enable_timescaledb)", first)
 	}
 
 	second, err := store.Migrate(t.Context(), pool)
