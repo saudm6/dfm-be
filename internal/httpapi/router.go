@@ -17,6 +17,7 @@ import (
 
 	"github.com/saudm6/dfm-be/api"
 	"github.com/saudm6/dfm-be/internal/auth"
+	"github.com/saudm6/dfm-be/internal/documents"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 	"github.com/saudm6/dfm-be/internal/ws"
 )
@@ -27,10 +28,11 @@ import (
 // /market/status reports the DFM session at now from the calendar cals loads.
 // sessions signs users in and out; every operation of api/openapi.yaml except
 // those in api.PublicOperations needs one of its sessions.
+// docs keeps each user's layouts and chart templates under /me/documents.
 // GET /ws upgrades a signed-in, same-origin request to a WebSocket served by
 // gateway; with a nil gateway there is no /ws.
-func NewRouter(logger *slog.Logger, db Pinger, cals CalendarLoader, now func() time.Time, sessions *auth.Service, gateway *ws.Gateway) http.Handler {
-	r := newRouter(logger, server{logger: logger, db: db, cals: cals, now: now, sessions: sessions}, sessions)
+func NewRouter(logger *slog.Logger, db Pinger, cals CalendarLoader, now func() time.Time, sessions *auth.Service, docs *documents.Store, gateway *ws.Gateway) http.Handler {
+	r := newRouter(logger, server{logger: logger, db: db, cals: cals, now: now, sessions: sessions, docs: docs}, sessions)
 	if gateway != nil {
 		r.Get("/ws", serveWebSocket(logger, sessions, gateway))
 	}
@@ -44,7 +46,7 @@ func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface, sessions *aut
 		RequestErrorHandlerFunc:  bodyDecodeError,
 		ResponseErrorHandlerFunc: handlerError(logger),
 	})
-	gen.HandlerWithOptions(loginGuard{h}, gen.ChiServerOptions{
+	gen.HandlerWithOptions(documentGuard{loginGuard{h}}, gen.ChiServerOptions{
 		BaseRouter:       r,
 		Middlewares:      []gen.MiddlewareFunc{requireAuth(logger, sessions, gen.SessionCookieScopes, apiPublicRoutes)},
 		ErrorHandlerFunc: paramBindError,

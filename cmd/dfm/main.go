@@ -28,6 +28,7 @@ import (
 	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/config"
+	"github.com/saudm6/dfm-be/internal/documents"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi"
 	"github.com/saudm6/dfm-be/internal/store"
@@ -217,7 +218,7 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 			IdleTimeout:    cfg.SessionIdleTimeout,
 			MaxAge:         cfg.SessionMaxAge,
 			InsecureCookie: !cfg.CookieSecure,
-		}), gateway),
+		}), documents.NewStore(pool, clock), gateway),
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}

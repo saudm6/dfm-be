@@ -15,6 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/saudm6/dfm-be/internal/auth"
+	"github.com/saudm6/dfm-be/internal/documents"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
@@ -28,6 +29,7 @@ type server struct {
 	cals     CalendarLoader
 	now      func() time.Time
 	sessions *auth.Service
+	docs     *documents.Store
 }
 
 var _ gen.StrictServerInterface = server{}

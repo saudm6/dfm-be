@@ -51,6 +51,7 @@ func TestSpecEnumsMatchDomain(t *testing.T) {
 		{"InstrumentStatus", []string{"listed", "suspended", "delisted", "matured"}, parser(domain.ParseInstrumentStatus)},
 		{"Role", []string{"owner", "member"}, parser(auth.ParseRole)},
 		{"MarketSession", []string{"pre-open", "continuous", "closing-auction", "closed"}, parser(calendar.ParseSession)},
+		{"DocumentKind", []string{"layout", "chart_template"}, parser(domain.ParseDocumentKind)},
 	}
 	schemas := loadSpec(t).Components.Schemas
 	for _, tt := range tests {

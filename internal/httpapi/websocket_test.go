@@ -49,7 +49,7 @@ func newWSFixture(t *testing.T) wsFixture {
 	f := newAuthFixture(t)
 	logs := &syncBuffer{}
 	gateway := ws.New(slog.New(slog.DiscardHandler), ws.Topics, ws.Options{})
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.NewJSONHandler(logs, nil)), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, gateway))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.NewJSONHandler(logs, nil)), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil, gateway))
 	t.Cleanup(func() {
 		gateway.Close()
 		srv.Close()
