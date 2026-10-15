@@ -33,6 +33,9 @@ const (
 	usage           = `usage: dfm [migrate | calendar close --date YYYY-MM-DD [--reason TEXT]]`
 )
 
+// clock is the time source of every command; tests replace it.
+var clock = time.Now
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, os.Args[1:], os.Environ(), os.Stdout)
@@ -66,7 +69,7 @@ func closeMarket(ctx context.Context, args, environ []string, stdout io.Writer) 
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *dateArg == "" || *reason == "" {
 		return errors.New(usage)
 	}
-	day, err := parseClosureDate(*dateArg, time.Now())
+	day, err := parseClosureDate(*dateArg, clock())
 	if err != nil {
 		return err
 	}
@@ -157,7 +160,7 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
 	srv := &http.Server{
-		Handler:           httpapi.NewRouter(logger, pool, calendar.Loader{DB: pool, Hours: cfg.Market.Hours()}, time.Now),
+		Handler:           httpapi.NewRouter(logger, pool, calendar.Loader{DB: pool, Hours: cfg.Market.Hours()}, clock),
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}

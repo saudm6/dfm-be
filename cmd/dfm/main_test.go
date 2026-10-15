@@ -18,6 +18,10 @@ import (
 )
 
 func TestRunErrors(t *testing.T) {
+	// 01:00 on 2026-10-15 in Dubai, still 2026-10-14 in UTC.
+	fixed := time.Date(2026, time.October, 14, 21, 0, 0, 0, time.UTC)
+	clock = func() time.Time { return fixed }
+	t.Cleanup(func() { clock = time.Now })
 	tests := []struct {
 		name    string
 		args    []string
@@ -76,7 +80,7 @@ func TestRunErrors(t *testing.T) {
 			name:    "calendar close far ahead",
 			args:    []string{"calendar", "close", "--date", "9999-01-01"},
 			environ: nil,
-			wantErr: "calendar close: --date 9999-01-01 is more than 2 years ahead; the last day accepted is " + time.Now().In(domain.DubaiTZ).AddDate(2, 0, 0).Format(time.DateOnly),
+			wantErr: "calendar close: --date 9999-01-01 is more than 2 years ahead; the last day accepted is 2028-10-15",
 		},
 		{
 			name:    "calendar close without database url",
