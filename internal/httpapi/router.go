@@ -8,17 +8,31 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
 
 // NewRouter returns the handler for every HTTP route of the service.
 // Each request gets a request ID and is logged to logger when it completes.
 func NewRouter(logger *slog.Logger) http.Handler {
+	return newRouter(logger, server{})
+}
+
+// newRouter serves the operations of api/openapi.yaml with ssi.
+func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(logRequests(logger))
 	r.Use(middleware.Recoverer)
 
-	r.Get("/healthz", healthz)
+	h := gen.NewStrictHandlerWithOptions(ssi, nil, gen.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc:  badRequest,
+		ResponseErrorHandlerFunc: internalError(logger),
+	})
+	gen.HandlerWithOptions(h, gen.ChiServerOptions{
+		BaseRouter:       r,
+		ErrorHandlerFunc: badRequest,
+	})
 	return r
 }
 

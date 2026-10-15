@@ -4,7 +4,7 @@ export DFM_HTTP_ADDR
 
 BIN := bin/dfm$(shell go env GOEXE)
 
-.PHONY: build test lint run
+.PHONY: build test lint run generate
 
 build:
 	go build -o $(BIN) ./cmd/dfm
@@ -17,3 +17,7 @@ lint:
 
 run:
 	go run ./cmd/dfm
+
+# Regenerates internal/httpapi/gen from api/openapi.yaml.
+generate:
+	go generate ./...

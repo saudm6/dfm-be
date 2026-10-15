@@ -1,8 +1,11 @@
 package httpapi
 
-import "net/http"
+import (
+	"context"
 
-func healthz(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+	"github.com/saudm6/dfm-be/internal/httpapi/gen"
+)
+
+func (server) GetHealth(context.Context, gen.GetHealthRequestObject) (gen.GetHealthResponseObject, error) {
+	return gen.GetHealth200JSONResponse{Status: gen.HealthStatusOK}, nil
 }

@@ -2,18 +2,25 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/saudm6/dfm-be/internal/httpapi"
+	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
 
 func TestRouter(t *testing.T) {
+	spec, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name            string
 		method          string
@@ -28,7 +35,7 @@ func TestRouter(t *testing.T) {
 			path:            "/healthz",
 			wantStatus:      http.StatusOK,
 			wantContentType: "application/json",
-			wantBody:        `{"status":"ok"}`,
+			wantBody:        "{\"status\":\"ok\"}\n",
 		},
 		{
 			name:            "health check wrong method",
@@ -37,6 +44,14 @@ func TestRouter(t *testing.T) {
 			wantStatus:      http.StatusMethodNotAllowed,
 			wantContentType: "",
 			wantBody:        "",
+		},
+		{
+			name:            "openapi spec",
+			method:          http.MethodGet,
+			path:            "/openapi.yaml",
+			wantStatus:      http.StatusOK,
+			wantContentType: "application/yaml",
+			wantBody:        string(spec),
 		},
 		{
 			name:            "unknown route",
@@ -64,6 +79,71 @@ func TestRouter(t *testing.T) {
 				t.Errorf("body = %q, want %q", got, tt.wantBody)
 			}
 		})
+	}
+}
+
+func TestRouterServesSpecWithLength(t *testing.T) {
+	spec, err := os.ReadFile("../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler)))
+	defer srv.Close()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/openapi.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.ContentLength != int64(len(spec)) {
+		t.Errorf("Content-Length = %d, want %d", resp.ContentLength, len(spec))
+	}
+}
+
+// failingServer serves the contract but every handler fails.
+type failingServer struct{}
+
+func (failingServer) GetHealth(context.Context, gen.GetHealthRequestObject) (gen.GetHealthResponseObject, error) {
+	return nil, errors.New("database unreachable")
+}
+
+func (failingServer) GetOpenAPISpec(context.Context, gen.GetOpenAPISpecRequestObject) (gen.GetOpenAPISpecResponseObject, error) {
+	return nil, errors.New("spec unreadable")
+}
+
+func TestRouterHandlerErrorSendsErrorBody(t *testing.T) {
+	var logs bytes.Buffer
+	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{})
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if got, want := rec.Body.String(), "{\"code\":\"internal\",\"message\":\"internal server error\"}\n"; got != want {
+		t.Errorf("body = %q, want %q", got, want)
+	}
+
+	var line struct {
+		Level string `json:"level"`
+		Msg   string `json:"msg"`
+		Path  string `json:"path"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(&logs).Decode(&line); err != nil {
+		t.Fatalf("decode log line: %v", err)
+	}
+	if line.Level != "ERROR" || line.Msg != "http handler failed" || line.Path != "/healthz" || line.Error != "database unreachable" {
+		t.Errorf("log line = %+v, want ERROR \"http handler failed\" /healthz \"database unreachable\"", line)
 	}
 }
 
@@ -97,8 +177,8 @@ func TestRouterLogsEachRequest(t *testing.T) {
 	if line.Method != http.MethodGet || line.Path != "/healthz" {
 		t.Errorf("method, path = %q, %q, want %q, %q", line.Method, line.Path, http.MethodGet, "/healthz")
 	}
-	if line.Status != 200 || line.Bytes != 15 {
-		t.Errorf("status, bytes = %d, %d, want %d, %d", line.Status, line.Bytes, 200, 15)
+	if line.Status != 200 || line.Bytes != 16 {
+		t.Errorf("status, bytes = %d, %d, want %d, %d", line.Status, line.Bytes, 200, 16)
 	}
 	if line.Duration == nil {
 		t.Error("duration missing from log line")
