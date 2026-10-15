@@ -1,0 +1,547 @@
+openapi: 3.1.0
+info:
+  title: DFM trader terminal API
+  version: 0.1.0
+  description: |
+    The HTTP contract between dfm-be and dfm-fe. The backend's strict server in
+    internal/httpapi/gen and the frontend's typed client are both generated from
+    this file. Live data is pushed over the WebSocket described in
+    api/websocket.md.
+
+    Conventions:
+    - JSON field names are lowerCamelCase.
+    - Prices and money values are decimal strings, never JSON numbers. The
+      server writes them without trailing zeros: "11.4", "0", "56500000.5".
+    - Times are RFC 3339 with an offset. Dates are YYYY-MM-DD.
+    - Every non-2xx response carries the Error body, including unknown paths
+      (404 not_found), wrong methods (405 method_not_allowed), and server
+      faults (500 internal). The only exception is a declared non-2xx
+      response with its own body, such as the 503 of /healthz.
+
+    Layout: one tagged section per feature in `paths` and in
+    `components.schemas`, F00 to F13 then H. Add a feature's paths and schemas
+    only inside its own section so parallel changes merge cleanly.
+
+servers:
+  - url: /
+
+tags:
+  - name: foundation
+    description: F00 Foundation. Health, the contract itself, accounts and sessions, source status.
+  - name: security-master
+    description: F01 Security master, search, and command line.
+  - name: quotes
+    description: F02 Live quotes and watchlists.
+  - name: movers
+    description: F03 Movers and heat map.
+  - name: disclosures
+    description: F04 News and disclosures.
+  - name: alerts
+    description: F05 Alerts.
+  - name: launchpad
+    description: F06 Launchpad workspace.
+  - name: studies
+    description: F07 Technical studies.
+  - name: correlation
+    description: F08 Correlation and pair spreads.
+  - name: custom-series
+    description: F09 Custom spreads and baskets.
+  - name: orders
+    description: F10 Order entry.
+  - name: positions
+    description: F11 Positions and live P&L.
+  - name: chat
+    description: F12 Chat.
+  - name: portfolio
+    description: F13 Portfolio analytics.
+  - name: history
+    description: H Market history and price charts.
+
+paths:
+  # ==========================================================================
+  # foundation (F00)
+  # ==========================================================================
+
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Report whether the service and its database are up
+      tags: [foundation]
+      responses:
+        "200":
+          description: The service is up and the database answers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              example: {status: ok, db: ok}
+        "503":
+          description: The database did not answer a ping within 2 seconds.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              example: {status: unavailable, db: unavailable}
+        default:
+          $ref: "#/components/responses/Error"
+
+  /openapi.yaml:
+    get:
+      operationId: getOpenAPISpec
+      summary: Download this contract
+      tags: [foundation]
+      responses:
+        "200":
+          description: This OpenAPI document as YAML.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+
+  /market/status:
+    get:
+      operationId: getMarketStatus
+      summary: Report the DFM session now and when continuous trading next opens
+      tags: [foundation]
+      responses:
+        "200":
+          description: The current session and the next open, from the trading calendar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketStatus"
+              example: {session: closed, nextOpen: "2026-10-19T10:00:00+04:00"}
+        "503":
+          description: The trading calendar could not be loaded within 2 seconds.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: unavailable, message: trading calendar unavailable}
+        default:
+          $ref: "#/components/responses/Error"
+
+  # ==========================================================================
+  # security-master (F01)
+  # ==========================================================================
+
+  # ==========================================================================
+  # quotes (F02)
+  # ==========================================================================
+
+  # ==========================================================================
+  # movers (F03)
+  # ==========================================================================
+
+  # ==========================================================================
+  # disclosures (F04)
+  # ==========================================================================
+
+  # ==========================================================================
+  # alerts (F05)
+  # ==========================================================================
+
+  # ==========================================================================
+  # launchpad (F06)
+  # ==========================================================================
+
+  # ==========================================================================
+  # studies (F07)
+  # ==========================================================================
+
+  # ==========================================================================
+  # correlation (F08)
+  # ==========================================================================
+
+  # ==========================================================================
+  # custom-series (F09)
+  # ==========================================================================
+
+  # ==========================================================================
+  # orders (F10)
+  # ==========================================================================
+
+  # ==========================================================================
+  # positions (F11)
+  # ==========================================================================
+
+  # ==========================================================================
+  # chat (F12)
+  # ==========================================================================
+
+  # ==========================================================================
+  # portfolio (F13)
+  # ==========================================================================
+
+  # ==========================================================================
+  # history (H)
+  # ==========================================================================
+
+components:
+  responses:
+    Error:
+      description: The request failed. The body says why.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    # ==========================================================================
+    # shared: errors, scalars, and the core market types (internal/domain)
+    # ==========================================================================
+
+    Error:
+      type: object
+      description: The body of every non-2xx response.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            Stable machine-readable reason in snake_case. Clients branch on
+            this, never on message. Known codes: bad_request, unauthorized,
+            forbidden, not_found, method_not_allowed, conflict, internal,
+            unavailable (a dependency such as the database did not answer;
+            retry later).
+          examples: [not_found]
+        message:
+          type: string
+          description: Human-readable detail. Safe to show to the user.
+          examples: ["instrument EMAAR not found"]
+
+    Symbol:
+      type: string
+      description: |
+        DFM trading code: 1 to 16 characters of A-Z and 0-9, with inner
+        space, '-', '_', or '.' (for example "EMAAR", "NBD GULF",
+        "TAKAFUL-EM", "SALAM_BAH"). The server upper-cases and trims input
+        symbols before validating them.
+      minLength: 1
+      maxLength: 16
+      pattern: "^[A-Z0-9]([A-Z0-9 ._-]*[A-Z0-9])?$"
+      examples: [EMAAR]
+
+    Decimal:
+      type: string
+      description: |
+        An exact decimal number written as a string. The server writes it
+        without trailing zeros ("11.4", not "11.40"). Use it for body fields
+        only: a decimal query or path parameter is a plain string schema that
+        the handler parses (see CONTRIBUTING.md).
+      pattern: "^-?[0-9]+(\\.[0-9]+)?$"
+      examples: ["11.4"]
+      x-go-type: decimal.Decimal
+      x-go-type-import:
+        path: github.com/shopspring/decimal
+
+    Exchange:
+      type: string
+      enum: [DFM, NASDAQ_DUBAI]
+      x-go-type: domain.Exchange
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Currency:
+      type: string
+      enum: [AED, USD]
+      x-go-type: domain.Currency
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Freshness:
+      type: string
+      description: |
+        How current a value is: realtime from a live feed, delayed from a
+        delayed feed, or eod from an end-of-day source.
+      enum: [realtime, delayed, eod]
+      x-go-type: domain.Freshness
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Source:
+      type: string
+      description: The feed a value came from.
+      enum: [ibkr, dfm-mw, dfm-history, self-recorded]
+      x-go-type: domain.Source
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Interval:
+      type: string
+      description: Bar length, one minute or one trading day.
+      enum: [1m, 1d]
+      x-go-type: domain.Interval
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    InstrumentClass:
+      type: string
+      enum: [equity, etf, reit, fund, bond, sukuk, future]
+      x-go-type: domain.InstrumentClass
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    InstrumentStatus:
+      type: string
+      enum: [listed, suspended, delisted, matured]
+      x-go-type: domain.InstrumentStatus
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Instrument:
+      type: object
+      description: A listed security.
+      required: [symbol, exchange, nameEn, class, currency, status]
+      properties:
+        symbol:
+          $ref: "#/components/schemas/Symbol"
+        exchange:
+          $ref: "#/components/schemas/Exchange"
+        isin:
+          type: string
+          description: ISO 6166 code, omitted when unknown.
+          pattern: "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+          examples: [AEE000301011]
+        nameEn:
+          type: string
+          examples: [Emaar Properties]
+        nameAr:
+          type: string
+          description: Arabic name, omitted when unknown.
+        class:
+          $ref: "#/components/schemas/InstrumentClass"
+        currency:
+          $ref: "#/components/schemas/Currency"
+        sector:
+          type: string
+          description: Sector name, omitted when unknown.
+        board:
+          type: string
+          description: DFM board code, omitted when unknown.
+          examples: ["510"]
+        status:
+          $ref: "#/components/schemas/InstrumentStatus"
+        listedAt:
+          type: string
+          format: date
+          description: First listing date, omitted when unknown.
+
+    Quote:
+      type: object
+      description: |
+        The latest level 1 snapshot of one instrument. A price of "0" or a
+        size of 0 means the feed did not provide it; last is "0" until the
+        first trade of the day.
+      required:
+        - symbol
+        - last
+        - bid
+        - ask
+        - bidSize
+        - askSize
+        - volume
+        - trades
+        - value
+        - prevClose
+        - asOf
+        - source
+        - freshness
+      properties:
+        symbol:
+          $ref: "#/components/schemas/Symbol"
+        last:
+          $ref: "#/components/schemas/Decimal"
+        bid:
+          $ref: "#/components/schemas/Decimal"
+        ask:
+          $ref: "#/components/schemas/Decimal"
+        bidSize:
+          type: integer
+          format: int64
+          minimum: 0
+        askSize:
+          type: integer
+          format: int64
+          minimum: 0
+        volume:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Shares traded today.
+        trades:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of trades today.
+        value:
+          $ref: "#/components/schemas/Decimal"
+        prevClose:
+          $ref: "#/components/schemas/Decimal"
+        lastTradeAt:
+          type: string
+          format: date-time
+          description: Time of the last trade, omitted before the first trade.
+        asOf:
+          type: string
+          format: date-time
+          description: When the source produced this snapshot.
+        source:
+          $ref: "#/components/schemas/Source"
+        freshness:
+          $ref: "#/components/schemas/Freshness"
+
+    Bar:
+      type: object
+      description: |
+        OHLC bar. A 1d bar starts at midnight Asia/Dubai of its trading day;
+        a 1m bar starts on a minute boundary. All prices are positive, or all
+        are "0" with volume and value 0 on a day with no trades.
+      required:
+        - symbol
+        - interval
+        - start
+        - open
+        - high
+        - low
+        - close
+        - volume
+        - value
+        - source
+        - freshness
+      properties:
+        symbol:
+          $ref: "#/components/schemas/Symbol"
+        interval:
+          $ref: "#/components/schemas/Interval"
+        start:
+          type: string
+          format: date-time
+          examples: ["2026-10-14T00:00:00+04:00"]
+        open:
+          $ref: "#/components/schemas/Decimal"
+        high:
+          $ref: "#/components/schemas/Decimal"
+        low:
+          $ref: "#/components/schemas/Decimal"
+        close:
+          $ref: "#/components/schemas/Decimal"
+        volume:
+          type: integer
+          format: int64
+          minimum: 0
+        value:
+          $ref: "#/components/schemas/Decimal"
+        source:
+          $ref: "#/components/schemas/Source"
+        freshness:
+          $ref: "#/components/schemas/Freshness"
+
+    # ==========================================================================
+    # foundation (F00)
+    # ==========================================================================
+
+    Health:
+      type: object
+      required: [status, db]
+      properties:
+        status:
+          type: string
+          description: ok when every dependency is ok, otherwise unavailable.
+          enum: [ok, unavailable]
+          x-order: 1
+          x-enum-varnames: [HealthStatusOK, HealthStatusUnavailable]
+        db:
+          type: string
+          description: Whether the database answered a ping.
+          enum: [ok, unavailable]
+          x-go-name: DB
+          x-order: 2
+          x-enum-varnames: [HealthDBOK, HealthDBUnavailable]
+
+    MarketSession:
+      type: string
+      description: |
+        The phase of the DFM trading day in Asia/Dubai: pre-open from 09:30,
+        continuous from 10:00, closing-auction from 14:45 (DFM's pre-closing
+        and trade-at-last sessions), and closed from 15:00 and on days DFM
+        does not trade. The times are the defaults; the server's config sets
+        them.
+      enum: [pre-open, continuous, closing-auction, closed]
+      x-go-type: calendar.Session
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/calendar
+
+    MarketStatus:
+      type: object
+      required: [session, nextOpen]
+      properties:
+        session:
+          $ref: "#/components/schemas/MarketSession"
+          x-order: 1
+        nextOpen:
+          type: string
+          format: date-time
+          x-order: 2
+          description: |
+            The next start of continuous trading strictly after now, in
+            +04:00. This is the continuous open, not the pre-open.
+          examples: ["2026-10-19T10:00:00+04:00"]
+
+    # ==========================================================================
+    # security-master (F01)
+    # ==========================================================================
+
+    # ==========================================================================
+    # quotes (F02)
+    # ==========================================================================
+
+    # ==========================================================================
+    # movers (F03)
+    # ==========================================================================
+
+    # ==========================================================================
+    # disclosures (F04)
+    # ==========================================================================
+
+    # ==========================================================================
+    # alerts (F05)
+    # ==========================================================================
+
+    # ==========================================================================
+    # launchpad (F06)
+    # ==========================================================================
+
+    # ==========================================================================
+    # studies (F07)
+    # ==========================================================================
+
+    # ==========================================================================
+    # correlation (F08)
+    # ==========================================================================
+
+    # ==========================================================================
+    # custom-series (F09)
+    # ==========================================================================
+
+    # ==========================================================================
+    # orders (F10)
+    # ==========================================================================
+
+    # ==========================================================================
+    # positions (F11)
+    # ==========================================================================
+
+    # ==========================================================================
+    # chat (F12)
+    # ==========================================================================
+
+    # ==========================================================================
+    # portfolio (F13)
+    # ==========================================================================
+
+    # ==========================================================================
+    # history (H)
+    # ==========================================================================

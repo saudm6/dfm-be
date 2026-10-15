@@ -2,13 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
-	"net/http"
 	"time"
 
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/domain"
+	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
 
 // CalendarLoader returns the current DFM trading calendar.
@@ -17,30 +16,24 @@ type CalendarLoader interface {
 	Load(ctx context.Context) (*calendar.Calendar, error)
 }
 
-type marketStatus struct {
-	Session  calendar.Session `json:"session"`
-	NextOpen time.Time        `json:"next_open"`
-}
+const calendarLoadTimeout = 2 * time.Second
 
-func getMarketStatus(logger *slog.Logger, cals CalendarLoader, now func() time.Time) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		cal, err := cals.Load(r.Context())
-		if err != nil {
-			logger.LogAttrs(r.Context(), slog.LevelError, "market status: load calendar failed", slog.String("error", err.Error()))
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":"calendar unavailable"}`))
-			return
+// GetMarketStatus loads the calendar on every request, so a closure added
+// with `dfm calendar close` shows without a restart.
+func (s server) GetMarketStatus(ctx context.Context, _ gen.GetMarketStatusRequestObject) (gen.GetMarketStatusResponseObject, error) {
+	loadCtx, cancel := context.WithTimeout(ctx, calendarLoadTimeout)
+	defer cancel()
+	cal, err := s.cals.Load(loadCtx)
+	if err != nil {
+		// A client that went away is not a server fault.
+		if ctx.Err() == nil {
+			s.logger.LogAttrs(ctx, slog.LevelError, "market status: load calendar failed", slog.String("error", err.Error()))
 		}
-		t := now()
-		body, err := json.Marshal(marketStatus{
-			Session:  cal.Session(t),
-			NextOpen: cal.NextOpen(t).In(domain.DubaiTZ),
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_, _ = w.Write(body)
+		return gen.GetMarketStatus503JSONResponse{Code: "unavailable", Message: "trading calendar unavailable"}, nil
 	}
+	t := s.now()
+	return gen.GetMarketStatus200JSONResponse{
+		Session:  cal.Session(t),
+		NextOpen: cal.NextOpen(t).In(domain.DubaiTZ),
+	}, nil
 }

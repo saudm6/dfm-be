@@ -1,6 +1,8 @@
 package calendar_test
 
 import (
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -251,6 +253,46 @@ func TestWeekdayUnmarshalText(t *testing.T) {
 			}
 			if got != tt.want || gotErr != tt.wantErr {
 				t.Errorf("UnmarshalText(%q) = %d, %q, want %d, %q", tt.in, got, gotErr, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseSession(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    calendar.Session
+		wantErr string
+	}{
+		{in: "pre-open", want: calendar.PreOpen},
+		{in: "continuous", want: calendar.Continuous},
+		{in: "closing-auction", want: calendar.ClosingAuction},
+		{in: "closed", want: calendar.Closed},
+		{in: "Closed", wantErr: `calendar: invalid session: unknown value "Closed"`},
+		{in: "", wantErr: `calendar: invalid session: unknown value ""`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := calendar.ParseSession(tt.in)
+			var bound calendar.Session
+			bindErr := bound.Bind(tt.in)
+			var decoded struct{ S calendar.Session }
+			jsonErr := json.Unmarshal([]byte(`{"S":"`+tt.in+`"}`), &decoded)
+
+			if tt.wantErr == "" {
+				if err != nil || bindErr != nil || jsonErr != nil {
+					t.Fatalf("ParseSession, Bind, json errors = %v, %v, %v, want nil", err, bindErr, jsonErr)
+				}
+				if got != tt.want || bound != tt.want || decoded.S != tt.want {
+					t.Errorf("ParseSession, Bind, json = %q, %q, %q, want %q", got, bound, decoded.S, tt.want)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr || !errors.Is(err, domain.ErrInvalid) {
+				t.Errorf("ParseSession(%q) error = %v, want %q wrapping domain.ErrInvalid", tt.in, err, tt.wantErr)
+			}
+			if !errors.Is(bindErr, domain.ErrInvalid) || !errors.Is(jsonErr, domain.ErrInvalid) {
+				t.Errorf("Bind, json errors = %v, %v, want domain.ErrInvalid", bindErr, jsonErr)
 			}
 		})
 	}

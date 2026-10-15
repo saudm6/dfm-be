@@ -5,7 +5,7 @@ LOCAL_DATABASE_URL := postgres://dfm:dfm@localhost:5432/dfm?sslmode=disable
 BIN := bin/dfm$(shell go env GOEXE)
 SQLC_IMAGE := sqlc/sqlc:1.31.1
 
-.PHONY: build test lint run migrate sqlc
+.PHONY: build test lint run generate migrate sqlc
 
 build:
 	go build -o $(BIN) ./cmd/dfm
@@ -28,3 +28,7 @@ migrate:
 # Regenerates internal/store/dbgen from sqlc.yaml, queries/ and migrations/.
 sqlc:
 	docker run --rm -v "$(CURDIR):/src" -w /src $(SQLC_IMAGE) generate
+
+# Regenerates internal/httpapi/gen from api/openapi.yaml.
+generate:
+	go generate ./...

@@ -69,6 +69,18 @@ func TestRunErrors(t *testing.T) {
 			wantErr: `calendar close: --date "16/10/2026" is not YYYY-MM-DD`,
 		},
 		{
+			name:    "calendar close before the calendar",
+			args:    []string{"calendar", "close", "--date", "0000-01-01"},
+			environ: nil,
+			wantErr: "calendar close: --date 0000-01-01 is before 2025-01-01, the first day of the calendar",
+		},
+		{
+			name:    "calendar close far ahead",
+			args:    []string{"calendar", "close", "--date", "9999-01-01"},
+			environ: nil,
+			wantErr: "calendar close: --date 9999-01-01 is more than 2 years ahead; the last day accepted is " + time.Now().In(domain.DubaiTZ).AddDate(2, 0, 0).Format(time.DateOnly),
+		},
+		{
 			name:    "calendar close without database url",
 			args:    []string{"calendar", "close", "--date", "2026-10-16"},
 			environ: nil,
@@ -81,6 +93,40 @@ func TestRunErrors(t *testing.T) {
 
 			if err == nil || err.Error() != tt.wantErr {
 				t.Fatalf("run() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseClosureDate(t *testing.T) {
+	// 01:00 on 2026-10-15 in Dubai, still 2026-10-14 in UTC.
+	now := time.Date(2026, time.October, 14, 21, 0, 0, 0, time.UTC)
+	tests := []struct {
+		in      string
+		want    string
+		wantErr string
+	}{
+		{in: "2025-01-01", want: "2025-01-01T00:00:00+04:00"},
+		{in: "2026-10-16", want: "2026-10-16T00:00:00+04:00"},
+		{in: "2028-10-15", want: "2028-10-15T00:00:00+04:00"},
+		{in: "2024-12-31", wantErr: "calendar close: --date 2024-12-31 is before 2025-01-01, the first day of the calendar"},
+		{in: "0000-01-01", wantErr: "calendar close: --date 0000-01-01 is before 2025-01-01, the first day of the calendar"},
+		{in: "2028-10-16", wantErr: "calendar close: --date 2028-10-16 is more than 2 years ahead; the last day accepted is 2028-10-15"},
+		{in: "2062-10-16", wantErr: "calendar close: --date 2062-10-16 is more than 2 years ahead; the last day accepted is 2028-10-15"},
+		{in: "2026-02-30", wantErr: `calendar close: --date "2026-02-30" is not YYYY-MM-DD`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := parseClosureDate(tt.in, now)
+
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Errorf("parseClosureDate(%q) error = %v, want %q", tt.in, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || got.Format(time.RFC3339) != tt.want {
+				t.Errorf("parseClosureDate(%q) = %s, %v, want %s", tt.in, got.Format(time.RFC3339), err, tt.want)
 			}
 		})
 	}
@@ -180,15 +226,15 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	go func() { _, _ = io.Copy(io.Discard, logs) }()
 
 	status, body := get(ctx, t, "http://"+addr+"/healthz")
-	if status != http.StatusOK || body != `{"status":"ok","db":"ok"}` {
-		t.Errorf("GET /healthz = %d %s, want 200 {\"status\":\"ok\",\"db\":\"ok\"}", status, body)
+	if want := "{\"status\":\"ok\",\"db\":\"ok\"}\n"; status != http.StatusOK || body != want {
+		t.Errorf("GET /healthz = %d %q, want 200 %q", status, body, want)
 	}
 
 	before := time.Now()
 	status, body = get(ctx, t, "http://"+addr+"/market/status")
 	var market struct {
 		Session  string    `json:"session"`
-		NextOpen time.Time `json:"next_open"`
+		NextOpen time.Time `json:"nextOpen"`
 	}
 	if err := json.Unmarshal([]byte(body), &market); err != nil || status != http.StatusOK {
 		t.Fatalf("GET /market/status = %d %s (%v), want 200 JSON", status, body, err)
@@ -197,7 +243,7 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 		t.Errorf("session = %q, want a DFM session", market.Session)
 	}
 	if _, offset := market.NextOpen.Zone(); offset != 4*60*60 || market.NextOpen.Format("15:04") != "10:00" || !market.NextOpen.After(before) {
-		t.Errorf("next_open = %s, want a later 10:00 +04:00", market.NextOpen.Format(time.RFC3339))
+		t.Errorf("nextOpen = %s, want a later 10:00 +04:00", market.NextOpen.Format(time.RFC3339))
 	}
 
 	cancel()

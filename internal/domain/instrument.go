@@ -42,6 +42,12 @@ func (c *InstrumentClass) UnmarshalText(text []byte) error {
 	return unmarshalText(c, ParseInstrumentClass, text)
 }
 
+// Bind sets c to ParseInstrumentClass(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (c *InstrumentClass) Bind(src string) error {
+	return unmarshalText(c, ParseInstrumentClass, []byte(src))
+}
+
 // InstrumentStatus is whether an instrument can trade.
 type InstrumentStatus string
 
@@ -74,6 +80,12 @@ func (s InstrumentStatus) MarshalText() ([]byte, error) { return []byte(s), nil 
 // UnmarshalText sets s to ParseInstrumentStatus(text), so decoding rejects unknown values.
 func (s *InstrumentStatus) UnmarshalText(text []byte) error {
 	return unmarshalText(s, ParseInstrumentStatus, text)
+}
+
+// Bind sets s to ParseInstrumentStatus(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (s *InstrumentStatus) Bind(src string) error {
+	return unmarshalText(s, ParseInstrumentStatus, []byte(src))
 }
 
 // Instrument is one row of the security master.

@@ -66,11 +66,10 @@ func closeMarket(ctx context.Context, args, environ []string, stdout io.Writer) 
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *dateArg == "" || *reason == "" {
 		return errors.New(usage)
 	}
-	d, err := time.Parse(time.DateOnly, *dateArg)
+	day, err := parseClosureDate(*dateArg, time.Now())
 	if err != nil {
-		return fmt.Errorf("calendar close: --date %q is not YYYY-MM-DD", *dateArg)
+		return err
 	}
-	day := domain.TradingDayStart(d.Year(), d.Month(), d.Day())
 
 	cfg, err := config.LoadBase(environ)
 	if err != nil {
@@ -92,6 +91,31 @@ func closeMarket(ctx context.Context, args, environ []string, stdout io.Writer) 
 	}
 	logger.Info(msg, "date", *dateArg)
 	return nil
+}
+
+// firstCalendarDay is the first day the seeded holidays table covers.
+var firstCalendarDay = domain.TradingDayStart(2025, time.January, 1)
+
+// parseClosureDate parses the --date of `dfm calendar close`: a Dubai date
+// from firstCalendarDay to two years after the Dubai date of now. The range
+// catches typos such as a wrong year.
+func parseClosureDate(s string, now time.Time) (time.Time, error) {
+	d, err := time.Parse(time.DateOnly, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("calendar close: --date %q is not YYYY-MM-DD", s)
+	}
+	day := domain.TradingDayStart(d.Year(), d.Month(), d.Day())
+	y, m, dd := now.In(domain.DubaiTZ).Date()
+	last := domain.TradingDayStart(y+2, m, dd)
+	switch {
+	case day.Before(firstCalendarDay):
+		return time.Time{}, fmt.Errorf("calendar close: --date %s is before %s, the first day of the calendar",
+			s, firstCalendarDay.Format(time.DateOnly))
+	case day.After(last):
+		return time.Time{}, fmt.Errorf("calendar close: --date %s is more than 2 years ahead; the last day accepted is %s",
+			s, last.Format(time.DateOnly))
+	}
+	return day, nil
 }
 
 // migrate applies pending migrations and exits.

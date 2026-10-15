@@ -24,6 +24,42 @@ const (
 	Closed         Session = "closed"
 )
 
+// ParseSession returns the Session named s. Its error wraps
+// domain.ErrInvalid.
+func ParseSession(s string) (Session, error) {
+	v := Session(s)
+	if !v.Valid() {
+		return "", fmt.Errorf("calendar: %w session: unknown value %q", domain.ErrInvalid, s)
+	}
+	return v, nil
+}
+
+// Valid reports whether s is a known session.
+func (s Session) Valid() bool {
+	switch s {
+	case PreOpen, Continuous, ClosingAuction, Closed:
+		return true
+	}
+	return false
+}
+
+// MarshalText returns s as text.
+func (s Session) MarshalText() ([]byte, error) { return []byte(s), nil }
+
+// UnmarshalText sets s to ParseSession(text), so decoding rejects unknown values.
+func (s *Session) UnmarshalText(text []byte) error { return s.Bind(string(text)) }
+
+// Bind sets s to ParseSession(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (s *Session) Bind(src string) error {
+	v, err := ParseSession(src)
+	if err != nil {
+		return err
+	}
+	*s = v
+	return nil
+}
+
 // TimeOfDay is a wall-clock time in Dubai, as minutes after midnight.
 type TimeOfDay int
 

@@ -67,6 +67,10 @@ func (e Exchange) MarshalText() ([]byte, error) { return []byte(e), nil }
 // UnmarshalText sets e to ParseExchange(text), so decoding rejects unknown values.
 func (e *Exchange) UnmarshalText(text []byte) error { return unmarshalText(e, ParseExchange, text) }
 
+// Bind sets e to ParseExchange(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (e *Exchange) Bind(src string) error { return unmarshalText(e, ParseExchange, []byte(src)) }
+
 // Currency is the ISO 4217 code an instrument trades in.
 type Currency string
 
@@ -93,6 +97,10 @@ func (c Currency) MarshalText() ([]byte, error) { return []byte(c), nil }
 
 // UnmarshalText sets c to ParseCurrency(text), so decoding rejects unknown values.
 func (c *Currency) UnmarshalText(text []byte) error { return unmarshalText(c, ParseCurrency, text) }
+
+// Bind sets c to ParseCurrency(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (c *Currency) Bind(src string) error { return unmarshalText(c, ParseCurrency, []byte(src)) }
 
 // Freshness says how old a price can be when it is shown.
 type Freshness string
@@ -122,6 +130,10 @@ func (f Freshness) MarshalText() ([]byte, error) { return []byte(f), nil }
 
 // UnmarshalText sets f to ParseFreshness(text), so decoding rejects unknown values.
 func (f *Freshness) UnmarshalText(text []byte) error { return unmarshalText(f, ParseFreshness, text) }
+
+// Bind sets f to ParseFreshness(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (f *Freshness) Bind(src string) error { return unmarshalText(f, ParseFreshness, []byte(src)) }
 
 // Source is the feed a price came from.
 type Source string
@@ -153,6 +165,10 @@ func (s Source) MarshalText() ([]byte, error) { return []byte(s), nil }
 // UnmarshalText sets s to ParseSource(text), so decoding rejects unknown values.
 func (s *Source) UnmarshalText(text []byte) error { return unmarshalText(s, ParseSource, text) }
 
+// Bind sets s to ParseSource(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (s *Source) Bind(src string) error { return unmarshalText(s, ParseSource, []byte(src)) }
+
 // Interval is the period one Bar covers.
 type Interval string
 
@@ -179,6 +195,10 @@ func (i Interval) MarshalText() ([]byte, error) { return []byte(i), nil }
 
 // UnmarshalText sets i to ParseInterval(text), so decoding rejects unknown values.
 func (i *Interval) UnmarshalText(text []byte) error { return unmarshalText(i, ParseInterval, text) }
+
+// Bind sets i to ParseInterval(src). The generated HTTP server calls it for
+// query parameters, so unknown values are rejected there too.
+func (i *Interval) Bind(src string) error { return unmarshalText(i, ParseInterval, []byte(src)) }
 
 type enum interface {
 	~string
