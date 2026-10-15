@@ -3,3 +3,37 @@
 //   sqlc v1.31.1
 
 package dbgen
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/saudm6/dfm-be/internal/domain"
+	"github.com/shopspring/decimal"
+)
+
+type Order struct {
+	ClientOrderID     uuid.UUID
+	Symbol            domain.Symbol
+	Side              domain.Side
+	Quantity          decimal.Decimal
+	LimitPrice        decimal.NullDecimal
+	CreatedQuantity   decimal.Decimal
+	CreatedLimitPrice decimal.NullDecimal
+	State             domain.OrderState
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type OrderEvent struct {
+	ID            int64
+	ClientOrderID uuid.UUID
+	Source        string
+	Action        string
+	FromState     pgtype.Text
+	ToState       pgtype.Text
+	Detail        []byte
+	RawMessage    pgtype.Text
+	RecordedAt    time.Time
+}
