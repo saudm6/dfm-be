@@ -104,7 +104,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 - [x] **44.** [dfm-be#30](https://github.com/saudm6/dfm-be/issues/30) Build the technical studies package. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **45.** [dfm-be#31](https://github.com/saudm6/dfm-be/issues/31) Serve technical studies over bars. Wave 7. Waits on step 42 ([dfm-be#29](https://github.com/saudm6/dfm-be/issues/29)), step 44 ([dfm-be#30](https://github.com/saudm6/dfm-be/issues/30)).
-- [ ] **46.** [dfm-be#40](https://github.com/saudm6/dfm-be/issues/40) Store per-user layouts and chart templates. Part of F06. Wave 5. Waits on step 5 ([dfm-be#5](https://github.com/saudm6/dfm-be/issues/5)).
+- [x] **46.** [dfm-be#40](https://github.com/saudm6/dfm-be/issues/40) Store per-user layouts and chart templates. Part of F06. Wave 5. Waits on step 5 ([dfm-be#5](https://github.com/saudm6/dfm-be/issues/5)).
 - **47.** [dfm-fe#18](https://github.com/saudm6/dfm-fe/issues/18) Add study overlays and panes to the chart. Wave 10. Waits on step 43 ([dfm-fe#17](https://github.com/saudm6/dfm-fe/issues/17)), step 45 ([dfm-be#31](https://github.com/saudm6/dfm-be/issues/31)), step 46 ([dfm-be#40](https://github.com/saudm6/dfm-be/issues/40)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).
 
 ### F05 Alerts
