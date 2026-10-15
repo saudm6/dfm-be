@@ -18,12 +18,32 @@ info:
       faults (500 internal). The only exception is a declared non-2xx
       response with its own body, such as the 503 of /healthz.
 
+    Authentication:
+    - Every operation needs a session unless it declares `security: []`
+      (/healthz, /openapi.yaml and POST /auth/login). POST /auth/login sets
+      the session cookie `dfm_session` (HttpOnly, SameSite=Strict, Path=/,
+      Secure unless the server runs with DFM_COOKIE_SECURE=false). Browsers
+      send it back on their own; clients never read it.
+    - A missing, unknown, or expired session gets 401 unauthorized.
+    - CSRF: every session has a CSRF token, returned in the `csrfToken`
+      field of POST /auth/login and GET /me. Send it in the `X-CSRF-Token`
+      header on every POST, PUT, PATCH, and DELETE that needs a session. A
+      missing or wrong token gets 403 forbidden. The token lasts as long as
+      the session.
+    - Scopes on `sessionCookie` name what the account's role must allow.
+      `marketData` (quotes, history, orders, positions) is granted to the
+      `owner` role only; a `member` gets 403 forbidden. Operations without a
+      scope (chat, layouts) are open to every signed-in account.
+
     Layout: one tagged section per feature in `paths` and in
     `components.schemas`, F00 to F13 then H. Add a feature's paths and schemas
     only inside its own section so parallel changes merge cleanly.
 
 servers:
   - url: /
+
+security:
+  - sessionCookie: []
 
 tags:
   - name: foundation
@@ -67,6 +87,7 @@ paths:
       operationId: getHealth
       summary: Report whether the service and its database are up
       tags: [foundation]
+      security: []
       responses:
         "200":
           description: The service is up and the database answers.
@@ -90,6 +111,7 @@ paths:
       operationId: getOpenAPISpec
       summary: Download this contract
       tags: [foundation]
+      security: []
       responses:
         "200":
           description: This OpenAPI document as YAML.
@@ -97,6 +119,81 @@ paths:
             application/yaml:
               schema:
                 type: string
+        default:
+          $ref: "#/components/responses/Error"
+
+  /auth/login:
+    post:
+      operationId: login
+      summary: Sign in and start a session
+      description: |
+        Checks the username and password and starts a session. The response
+        sets the session cookie and carries the session's CSRF token. An
+        unknown username and a wrong password get the same 401.
+      tags: [foundation]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              description: The session cookie, `dfm_session=...; Path=/; Max-Age=...; HttpOnly; Secure; SameSite=Strict`.
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          description: The username or password is wrong.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: unauthorized, message: invalid username or password}
+        default:
+          $ref: "#/components/responses/Error"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: End the current session
+      description: Deletes the session on the server and expires the cookie.
+      tags: [foundation]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: Signed out.
+          headers:
+            Set-Cookie:
+              description: Expires the session cookie, `dfm_session=; Path=/; Max-Age=0; ...`.
+              required: true
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+
+  /me:
+    get:
+      operationId: getMe
+      summary: Describe the signed-in account and its session
+      tags: [foundation]
+      responses:
+        "200":
+          description: The signed-in account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
         default:
           $ref: "#/components/responses/Error"
 
@@ -157,6 +254,23 @@ paths:
   # ==========================================================================
 
 components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: dfm_session
+      description: |
+        The session cookie set by POST /auth/login. Scopes listed with it
+        name the permissions the account's role needs: `marketData` is
+        granted to `owner` only.
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: |
+        The session's CSRF token from POST /auth/login or GET /me. Required
+        on every POST, PUT, PATCH, and DELETE that needs a session.
+
   responses:
     Error:
       description: The request failed. The body says why.
@@ -435,6 +549,51 @@ components:
           x-go-name: DB
           x-order: 2
           x-enum-varnames: [HealthDBOK, HealthDBUnavailable]
+
+    Role:
+      type: string
+      description: |
+        owner has every permission, including market data and trading.
+        member can use chat and layouts only.
+      enum: [owner, member]
+      x-go-type: auth.Role
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/auth
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: Case-insensitive.
+          examples: [saud]
+        password:
+          type: string
+          format: password
+
+    Me:
+      type: object
+      description: The signed-in account and its session.
+      required: [id, username, role, csrfToken]
+      properties:
+        id:
+          type: integer
+          format: int64
+          x-go-name: ID
+          x-order: 1
+        username:
+          type: string
+          examples: [saud]
+          x-order: 2
+        role:
+          $ref: "#/components/schemas/Role"
+          x-order: 3
+        csrfToken:
+          type: string
+          description: Send in the X-CSRF-Token header on POST, PUT, PATCH, and DELETE.
+          x-go-name: CSRFToken
+          x-order: 4
 
     # ==========================================================================
     # security-master (F01)

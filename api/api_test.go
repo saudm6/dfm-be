@@ -2,11 +2,13 @@ package api_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
 	"github.com/saudm6/dfm-be/api"
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/domain"
 )
 
@@ -45,6 +47,7 @@ func TestSpecEnumsMatchDomain(t *testing.T) {
 		{"Interval", []string{"1m", "1d"}, parser(domain.ParseInterval)},
 		{"InstrumentClass", []string{"equity", "etf", "reit", "fund", "bond", "sukuk", "future"}, parser(domain.ParseInstrumentClass)},
 		{"InstrumentStatus", []string{"listed", "suspended", "delisted", "matured"}, parser(domain.ParseInstrumentStatus)},
+		{"Role", []string{"owner", "member"}, parser(auth.ParseRole)},
 	}
 	schemas := loadSpec(t).Components.Schemas
 	for _, tt := range tests {
@@ -126,4 +129,65 @@ func decimalParams(doc *openapi3.T) []string {
 	}
 	slices.Sort(found)
 	return found
+}
+
+// operationSecurity returns the security requirements of every operation,
+// keyed by "METHOD /path", with the document's requirements applied to
+// operations that declare none.
+func operationSecurity(doc *openapi3.T) map[string]openapi3.SecurityRequirements {
+	out := map[string]openapi3.SecurityRequirements{}
+	for path, item := range doc.Paths.Map() {
+		for method, op := range item.Operations() {
+			sec := doc.Security
+			if op.Security != nil {
+				sec = *op.Security
+			}
+			out[method+" "+path] = sec
+		}
+	}
+	return out
+}
+
+// The auth middleware lets through every operation without security
+// requirements, so making one public must be a deliberate change here.
+func TestSpecPublicOperations(t *testing.T) {
+	var public []string
+	for op, sec := range operationSecurity(loadSpec(t)) {
+		if len(sec) == 0 {
+			public = append(public, op)
+		}
+	}
+	slices.Sort(public)
+	if want := []string{"GET /healthz", "GET /openapi.yaml", "POST /auth/login"}; !slices.Equal(public, want) {
+		t.Errorf("operations without security = %q, want %q", public, want)
+	}
+}
+
+// The middleware checks the CSRF token on every unsafe method; the spec must
+// say so for the generated client.
+func TestSpecUnsafeOperationsNeedCSRFToken(t *testing.T) {
+	for op, sec := range operationSecurity(loadSpec(t)) {
+		method, _, _ := strings.Cut(op, " ")
+		if len(sec) == 0 || method == "GET" || method == "HEAD" || method == "OPTIONS" {
+			continue
+		}
+		for _, req := range sec {
+			if _, ok := req["csrfToken"]; !ok {
+				t.Errorf("%s: security requirement %v lacks csrfToken", op, req)
+			}
+		}
+	}
+}
+
+// The middleware answers 500 for a sessionCookie scope it does not know.
+func TestSpecSessionScopesAreKnown(t *testing.T) {
+	for op, sec := range operationSecurity(loadSpec(t)) {
+		for _, req := range sec {
+			for _, scope := range req["sessionCookie"] {
+				if scope != "marketData" {
+					t.Errorf("%s: unknown sessionCookie scope %q", op, scope)
+				}
+			}
+		}
+	}
 }

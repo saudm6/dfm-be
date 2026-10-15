@@ -3,3 +3,24 @@
 //   sqlc v1.31.1
 
 package dbgen
+
+import (
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type Session struct {
+	TokenHash         []byte
+	UserID            int64
+	CsrfToken         string
+	CreatedAt         pgtype.Timestamptz
+	IdleExpiresAt     pgtype.Timestamptz
+	AbsoluteExpiresAt pgtype.Timestamptz
+}
+
+type User struct {
+	ID           int64
+	Username     string
+	PasswordHash string
+	Role         string
+	CreatedAt    pgtype.Timestamptz
+}

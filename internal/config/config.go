@@ -2,8 +2,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -12,7 +14,20 @@ import (
 type Config struct {
 	// HTTPAddr is the listen address of the HTTP server, such as ":8080".
 	HTTPAddr string `env:"DFM_HTTP_ADDR,required,notEmpty"`
+	Session
 	Base
+}
+
+// Session configures sign-in sessions.
+type Session struct {
+	// SessionIdleTimeout ends a session after this long without a request.
+	SessionIdleTimeout time.Duration `env:"DFM_SESSION_IDLE_TIMEOUT" envDefault:"12h"`
+	// SessionMaxAge ends a session this long after sign-in, however active.
+	SessionMaxAge time.Duration `env:"DFM_SESSION_MAX_AGE" envDefault:"168h"`
+	// CookieSecure sets the Secure attribute on the session cookie, so
+	// clients send it over https only. Set DFM_COOKIE_SECURE=false to sign
+	// in over plain http in local development; `make run` does.
+	CookieSecure bool `env:"DFM_COOKIE_SECURE" envDefault:"true"`
 }
 
 // Base is the configuration every command needs, including migrate.
@@ -28,7 +43,14 @@ type Base struct {
 // pairs like os.Environ returns. A missing or empty required variable fails
 // with an error that names it.
 func Load(environ []string) (Config, error) {
-	return parse[Config](environ)
+	cfg, err := parse[Config](environ)
+	if err != nil {
+		return Config{}, err
+	}
+	if cfg.SessionIdleTimeout <= 0 || cfg.SessionMaxAge <= 0 {
+		return Config{}, errors.New("config: DFM_SESSION_IDLE_TIMEOUT and DFM_SESSION_MAX_AGE must be positive")
+	}
+	return cfg, nil
 }
 
 // LoadBase parses only the variables in Base from environ.

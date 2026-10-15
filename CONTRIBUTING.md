@@ -54,6 +54,27 @@ server. `binding_test.go` uses it to check path, query, and body binding
 through the real router setup. Extend it when you add a new kind of
 parameter.
 
+### Authentication and roles
+
+Every operation needs a signed-in session by default: the spec's top-level
+`security` applies the `sessionCookie` scheme. The auth middleware reads each
+operation's requirements from the request context, where the generated code
+puts them, so the spec decides what is protected:
+
+- `security: []` makes an operation public. `api.TestSpecPublicOperations`
+  lists the public operations, so adding one is a deliberate change.
+- A POST, PUT, PATCH, or DELETE declares
+  `security: [{sessionCookie: [], csrfToken: []}]`. The middleware checks the
+  `X-CSRF-Token` header on those methods whatever the spec says;
+  `api.TestSpecUnsafeOperationsNeedCSRFToken` keeps the spec in step.
+- Market-data and trading operations (quotes, history, orders, positions)
+  add the `marketData` scope: `sessionCookie: [marketData]`. Only the
+  `owner` role has it; a `member` gets 403. Chat and layouts use no scope.
+
+Handlers read the signed-in user with `auth.SessionFromContext(ctx)`. Code
+outside the generated routes, such as the `/ws` upgrade, calls
+`(*auth.Service).UserFromRequest(r)` and `auth.RequireMarketData(ctx)`.
+
 ### Errors
 
 Every non-2xx response carries the `Error` body: 400 `bad_request` for

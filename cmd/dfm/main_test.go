@@ -7,8 +7,12 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/saudm6/dfm-be/internal/auth"
+	"github.com/saudm6/dfm-be/internal/store"
 	"github.com/saudm6/dfm-be/internal/store/storetest"
 )
 
@@ -35,12 +39,42 @@ func TestRunErrors(t *testing.T) {
 			name:    "unknown command",
 			args:    []string{"seed"},
 			environ: nil,
-			wantErr: `usage: dfm [migrate]`,
+			wantErr: `usage: dfm [migrate | user create --username NAME --role owner|member]`,
+		},
+		{
+			name:    "user create without role",
+			args:    []string{"user", "create", "--username", "saud"},
+			environ: nil,
+			wantErr: `--role must be owner or member, not ""`,
+		},
+		{
+			name:    "user create with unknown role",
+			args:    []string{"user", "create", "--username", "saud", "--role", "admin"},
+			environ: nil,
+			wantErr: `--role must be owner or member, not "admin"`,
+		},
+		{
+			name:    "user create with bad username",
+			args:    []string{"user", "create", "--username", "saud m", "--role", "owner"},
+			environ: nil,
+			wantErr: `auth: username "saud m" must be 1 to 64 characters of a-z, 0-9, '.', '_' and '-', starting with a letter or digit`,
+		},
+		{
+			name:    "user create with unknown flag",
+			args:    []string{"user", "create", "--admin"},
+			environ: nil,
+			wantErr: `usage: dfm [migrate | user create --username NAME --role owner|member]`,
+		},
+		{
+			name:    "user create without database url",
+			args:    []string{"user", "create", "--username", "saud", "--role", "owner"},
+			environ: nil,
+			wantErr: `config: env: required environment variable "DFM_DATABASE_URL" is not set`,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := run(t.Context(), tt.args, tt.environ, io.Discard)
+			err := run(t.Context(), tt.args, tt.environ, strings.NewReader(""), io.Discard)
 
 			if err == nil || err.Error() != tt.wantErr {
 				t.Fatalf("run() error = %v, want %q", err, tt.wantErr)
@@ -55,12 +89,12 @@ func TestRunMigrateIsIdempotent(t *testing.T) {
 		name        string
 		wantApplied []int64
 	}{
-		{name: "empty database", wantApplied: []int64{20261015120000}},
+		{name: "empty database", wantApplied: []int64{20261015120000, 20261015140000}},
 		{name: "second run", wantApplied: []int64{}},
 	}
 	for _, tt := range tests {
 		var logs bytes.Buffer
-		if err := run(t.Context(), []string{"migrate"}, environ, &logs); err != nil {
+		if err := run(t.Context(), []string{"migrate"}, environ, strings.NewReader(""), &logs); err != nil {
 			t.Fatalf("%s: run(migrate) error = %v", tt.name, err)
 		}
 		var line struct {
@@ -83,7 +117,7 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	logs, logw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		err := run(ctx, nil, environ, logw)
+		err := run(ctx, nil, environ, strings.NewReader(""), logw)
 		_ = logw.Close()
 		done <- err
 	}()
@@ -131,8 +165,8 @@ func listenAddr(t *testing.T, logs io.Reader) string {
 		}
 		switch line.Msg {
 		case "database migrated":
-			if !slices.Equal(line.Applied, []int64{20261015120000}) {
-				t.Errorf("startup applied %v, want [20261015120000]", line.Applied)
+			if !slices.Equal(line.Applied, []int64{20261015120000, 20261015140000}) {
+				t.Errorf("startup applied %v, want [20261015120000 20261015140000]", line.Applied)
 			}
 			migrated = true
 		case "http server listening":
@@ -141,5 +175,53 @@ func listenAddr(t *testing.T, logs io.Reader) string {
 			}
 			return line.Addr
 		}
+	}
+}
+
+func TestRunUserCreateSeedsAccountThatCanSignIn(t *testing.T) {
+	dbURL := storetest.NewURL(t)
+	environ := []string{"DFM_DATABASE_URL=" + dbURL}
+	var logs bytes.Buffer
+
+	err := run(t.Context(), []string{"user", "create", "--role", "owner", "--username", "Saud"}, environ,
+		strings.NewReader("correct horse battery\r\n"), &logs)
+
+	if err != nil {
+		t.Fatalf("run(user create) error = %v", err)
+	}
+	dec := json.NewDecoder(&logs)
+	var line struct {
+		Msg      string `json:"msg"`
+		ID       int64  `json:"id"`
+		Username string `json:"username"`
+		Role     string `json:"role"`
+	}
+	for line.Msg != "user created" {
+		if err := dec.Decode(&line); err != nil {
+			t.Fatalf("no \"user created\" log line: %v", err)
+		}
+	}
+	if line.ID != 1 || line.Username != "saud" || line.Role != "owner" {
+		t.Errorf("log = %+v, want id 1, username saud, role owner", line)
+	}
+
+	pool, err := store.Open(t.Context(), dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	sess, _, err := auth.NewService(pool, auth.Options{IdleTimeout: time.Hour, MaxAge: time.Hour}).
+		Login(t.Context(), "saud", "correct horse battery")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if want := (auth.User{ID: 1, Username: "saud", Role: auth.Owner}); sess.User != want {
+		t.Errorf("Login() user = %+v, want %+v", sess.User, want)
+	}
+
+	err = run(t.Context(), []string{"user", "create", "--role", "member", "--username", "saud"}, environ,
+		strings.NewReader("another password\n"), io.Discard)
+	if err == nil || err.Error() != "auth: username is taken: saud" {
+		t.Errorf("second run(user create) error = %v, want %q", err, "auth: username is taken: saud")
 	}
 }

@@ -81,7 +81,7 @@ func TestRouter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := httpapi.NewRouter(slog.New(slog.DiscardHandler), tt.db)
+			router := httpapi.NewRouter(slog.New(slog.DiscardHandler), tt.db, nil)
 			rec := httptest.NewRecorder()
 
 			router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, nil))
@@ -107,7 +107,7 @@ func TestRouterServesSpecWithLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, nil))
 	defer srv.Close()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/openapi.yaml", nil)
 	if err != nil {
@@ -138,7 +138,7 @@ func (failingServer) GetHealth(context.Context, gen.GetHealthRequestObject) (gen
 
 func TestRouterHandlerErrorSendsErrorBody(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{})
+	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{}, nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
@@ -169,7 +169,7 @@ func TestRouterHandlerErrorSendsErrorBody(t *testing.T) {
 
 func TestRouterLogsEachRequest(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{})
+	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{}, nil)
 
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz?probe=1", nil))
 
@@ -210,7 +210,7 @@ func TestRouterLogsEachRequest(t *testing.T) {
 
 func TestHealthzLogsDatabaseError(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{err: errors.New("connection refused")})
+	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{err: errors.New("connection refused")}, nil)
 
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
 
@@ -230,7 +230,7 @@ func TestHealthzLogsDatabaseError(t *testing.T) {
 
 func TestRouterPanicSendsErrorBody(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{})
+	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{}, nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.yaml", nil))

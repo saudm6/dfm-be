@@ -16,6 +16,11 @@ import (
 	"github.com/saudm6/dfm-be/internal/domain"
 )
 
+const (
+	CsrfTokenScopes     csrfTokenContextKey     = "csrfToken.Scopes"
+	SessionCookieScopes sessionCookieContextKey = "sessionCookie.Scopes"
+)
+
 // Bound defines model for Bound.
 type Bound struct {
 	Freshness *Freshness `json:"freshness,omitempty"`
@@ -48,6 +53,12 @@ type Order struct {
 // Source defines model for Source.
 type Source = domain.Source
 
+// csrfTokenContextKey is the context key for csrfToken security scheme
+type csrfTokenContextKey string
+
+// sessionCookieContextKey is the context key for sessionCookie security scheme
+type sessionCookieContextKey string
+
 // ListBarsParams defines parameters for ListBars.
 type ListBarsParams struct {
 	Source    Source     `form:"source" json:"source"`
@@ -67,8 +78,14 @@ type ServerInterface interface {
 	// (GET /bars/{interval})
 	ListBars(w http.ResponseWriter, r *http.Request, interval Interval, params ListBarsParams)
 
+	// (POST /messages)
+	PostMessage(w http.ResponseWriter, r *http.Request)
+
 	// (POST /orders)
 	PlaceOrder(w http.ResponseWriter, r *http.Request)
+
+	// (GET /quotes)
+	ListQuotes(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -80,8 +97,18 @@ func (_ Unimplemented) ListBars(w http.ResponseWriter, r *http.Request, interval
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (POST /messages)
+func (_ Unimplemented) PostMessage(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (POST /orders)
 func (_ Unimplemented) PlaceOrder(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /quotes)
+func (_ Unimplemented) ListQuotes(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -175,11 +202,53 @@ func (siw *ServerInterfaceWrapper) ListBars(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// PostMessage operation middleware
+func (siw *ServerInterfaceWrapper) PostMessage(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CsrfTokenScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostMessage(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PlaceOrder operation middleware
 func (siw *ServerInterfaceWrapper) PlaceOrder(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PlaceOrder(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListQuotes operation middleware
+func (siw *ServerInterfaceWrapper) ListQuotes(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{"marketData"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListQuotes(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -308,6 +377,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/orders", wrapper.PlaceOrder)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/quotes", wrapper.ListQuotes)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/messages", wrapper.PostMessage)
+	})
 
 	return r
 }
@@ -343,6 +418,38 @@ type ListBarsdefaultJSONResponse struct {
 }
 
 func (response ListBarsdefaultJSONResponse) VisitListBarsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostMessageRequestObject struct {
+}
+
+type PostMessageResponseObject interface {
+	VisitPostMessageResponse(w http.ResponseWriter) error
+}
+
+type PostMessage204Response struct {
+}
+
+func (response PostMessage204Response) VisitPostMessageResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostMessagedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response PostMessagedefaultJSONResponse) VisitPostMessageResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -393,14 +500,52 @@ func (response PlaceOrderdefaultJSONResponse) VisitPlaceOrderResponse(w http.Res
 	return err
 }
 
+type ListQuotesRequestObject struct {
+}
+
+type ListQuotesResponseObject interface {
+	VisitListQuotesResponse(w http.ResponseWriter) error
+}
+
+type ListQuotes204Response struct {
+}
+
+func (response ListQuotes204Response) VisitListQuotesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ListQuotesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListQuotesdefaultJSONResponse) VisitListQuotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 
 	// (GET /bars/{interval})
 	ListBars(ctx context.Context, request ListBarsRequestObject) (ListBarsResponseObject, error)
 
+	// (POST /messages)
+	PostMessage(ctx context.Context, request PostMessageRequestObject) (PostMessageResponseObject, error)
+
 	// (POST /orders)
 	PlaceOrder(ctx context.Context, request PlaceOrderRequestObject) (PlaceOrderResponseObject, error)
+
+	// (GET /quotes)
+	ListQuotes(ctx context.Context, request ListQuotesRequestObject) (ListQuotesResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -469,6 +614,30 @@ func (sh *strictHandler) ListBars(w http.ResponseWriter, r *http.Request, interv
 	}
 }
 
+// PostMessage operation middleware
+func (sh *strictHandler) PostMessage(w http.ResponseWriter, r *http.Request) {
+	var request PostMessageRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostMessage(ctx, request.(PostMessageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostMessage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostMessageResponseObject); ok {
+		if err := validResponse.VisitPostMessageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // PlaceOrder operation middleware
 func (sh *strictHandler) PlaceOrder(w http.ResponseWriter, r *http.Request) {
 	var request PlaceOrderRequestObject
@@ -493,6 +662,30 @@ func (sh *strictHandler) PlaceOrder(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PlaceOrderResponseObject); ok {
 		if err := validResponse.VisitPlaceOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListQuotes operation middleware
+func (sh *strictHandler) ListQuotes(w http.ResponseWriter, r *http.Request) {
+	var request ListQuotesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListQuotes(ctx, request.(ListQuotesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListQuotes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListQuotesResponseObject); ok {
+		if err := validResponse.VisitListQuotesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

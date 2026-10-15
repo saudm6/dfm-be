@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/shopspring/decimal"
 
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
@@ -21,8 +22,9 @@ import (
 // its handler methods in its own file in this package, and adds the
 // dependencies it needs as fields here.
 type server struct {
-	logger *slog.Logger
-	db     Pinger
+	logger   *slog.Logger
+	db       Pinger
+	sessions *auth.Service
 }
 
 var _ gen.StrictServerInterface = server{}

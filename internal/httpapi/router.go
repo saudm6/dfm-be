@@ -13,18 +13,21 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
 
 // NewRouter returns the handler for every HTTP route of the service.
 // Each request gets a request ID and is logged to logger when it completes.
 // db is the service database; /healthz reports whether it answers.
-func NewRouter(logger *slog.Logger, db Pinger) http.Handler {
-	return newRouter(logger, server{logger: logger, db: db})
+// sessions signs users in and out; every operation of api/openapi.yaml that
+// does not declare `security: []` needs one of its sessions.
+func NewRouter(logger *slog.Logger, db Pinger, sessions *auth.Service) http.Handler {
+	return newRouter(logger, server{logger: logger, db: db, sessions: sessions}, sessions)
 }
 
 // newRouter serves the operations of api/openapi.yaml with ssi.
-func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface) http.Handler {
+func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface, sessions *auth.Service) http.Handler {
 	r := newBaseRouter(logger)
 	h := gen.NewStrictHandlerWithOptions(ssi, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  bodyDecodeError,
@@ -32,6 +35,7 @@ func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface) http.Handler 
 	})
 	gen.HandlerWithOptions(h, gen.ChiServerOptions{
 		BaseRouter:       r,
+		Middlewares:      []gen.MiddlewareFunc{requireAuth(logger, sessions, gen.SessionCookieScopes)},
 		ErrorHandlerFunc: paramBindError,
 	})
 	return r

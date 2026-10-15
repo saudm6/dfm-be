@@ -3,6 +3,7 @@ package config_test
 import (
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/saudm6/dfm-be/internal/config"
 )
@@ -20,14 +21,19 @@ func TestLoad(t *testing.T) {
 			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL},
 			want: config.Config{
 				HTTPAddr: ":8080",
+				Session:  config.Session{SessionIdleTimeout: 12 * time.Hour, SessionMaxAge: 168 * time.Hour, CookieSecure: true},
 				Base:     config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
 			},
 		},
 		{
-			name:    "all set",
-			environ: []string{"DFM_HTTP_ADDR=127.0.0.1:9000", "DFM_LOG_LEVEL=debug", "DFM_DATABASE_URL=" + dbURL},
+			name: "all set",
+			environ: []string{
+				"DFM_HTTP_ADDR=127.0.0.1:9000", "DFM_LOG_LEVEL=debug", "DFM_DATABASE_URL=" + dbURL,
+				"DFM_SESSION_IDLE_TIMEOUT=30m", "DFM_SESSION_MAX_AGE=24h", "DFM_COOKIE_SECURE=false",
+			},
 			want: config.Config{
 				HTTPAddr: "127.0.0.1:9000",
+				Session:  config.Session{SessionIdleTimeout: 30 * time.Minute, SessionMaxAge: 24 * time.Hour, CookieSecure: false},
 				Base:     config.Base{LogLevel: slog.LevelDebug, DatabaseURL: dbURL},
 			},
 		},
@@ -70,6 +76,21 @@ func TestLoadErrors(t *testing.T) {
 			name:    "invalid log level",
 			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_LOG_LEVEL=loud", "DFM_DATABASE_URL=" + dbURL},
 			wantErr: `config: env: parse error on field "LogLevel" of type "slog.Level": slog: level string "loud": unknown name`,
+		},
+		{
+			name:    "zero idle timeout",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_SESSION_IDLE_TIMEOUT=0s"},
+			wantErr: `config: DFM_SESSION_IDLE_TIMEOUT and DFM_SESSION_MAX_AGE must be positive`,
+		},
+		{
+			name:    "negative max age",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_SESSION_MAX_AGE=-1h"},
+			wantErr: `config: DFM_SESSION_IDLE_TIMEOUT and DFM_SESSION_MAX_AGE must be positive`,
+		},
+		{
+			name:    "invalid cookie switch",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_COOKIE_SECURE=maybe"},
+			wantErr: `config: env: parse error on field "CookieSecure" of type "bool": strconv.ParseBool: parsing "maybe": invalid syntax`,
 		},
 	}
 	for _, tt := range tests {
