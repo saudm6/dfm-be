@@ -10,6 +10,7 @@ require (
 	github.com/shopspring/decimal v1.5.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	gonum.org/v1/gonum v0.17.0
 )
 
 require (
