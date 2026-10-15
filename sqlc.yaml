@@ -24,3 +24,5 @@ sql:
             go_type: github.com/saudm6/dfm-be/internal/domain.Side
           - column: orders.state
             go_type: github.com/saudm6/dfm-be/internal/domain.OrderState
+          - column: user_documents.kind
+            go_type: github.com/saudm6/dfm-be/internal/domain.DocumentKind

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/calendar"
@@ -145,13 +146,72 @@ type Currency = domain.Currency
 // Examples: 11.4
 type Decimal = decimal.Decimal
 
+// Document defines model for Document.
+type Document struct {
+	// Kind What a document holds, a workspace `layout` or a `chart_template`.
+	Kind DocumentKind `json:"kind"`
+
+	// Name 1 to 64 characters of A-Z, a-z, 0-9, space, '_', '.' and '-',
+	// starting with a letter or digit and not ending with a space.
+	// Case-sensitive. Percent-encode spaces in the path.
+	//
+	//
+	// Examples: Morning
+	Name DocumentName `json:"name"`
+
+	// SchemaVersion The version of the client's schema for body.
+	SchemaVersion int32 `json:"schemaVersion"`
+
+	// Body The document itself: any JSON object, kept as written apart from
+	// insignificant whitespace. The server does not interpret it.
+	Body DocumentBody `json:"body"`
+}
+
+// DocumentBody The document itself: any JSON object, kept as written apart from
+// insignificant whitespace. The server does not interpret it.
+type DocumentBody = json.RawMessage
+
+// DocumentInfo A stored document without its body.
+type DocumentInfo struct {
+	// Name 1 to 64 characters of A-Z, a-z, 0-9, space, '_', '.' and '-',
+	// starting with a letter or digit and not ending with a space.
+	// Case-sensitive. Percent-encode spaces in the path.
+	//
+	//
+	// Examples: Morning
+	Name DocumentName `json:"name"`
+
+	// ETag The document's entity tag, quoted, as sent in the ETag header. Send it as is in If-Match.
+	//
+	// Examples: "0f1d6a2b9c3e4d5f60718293a4b5c6d7"
+	ETag      string    `json:"etag"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// DocumentKind What a document holds, a workspace `layout` or a `chart_template`.
+type DocumentKind = domain.DocumentKind
+
+// DocumentList defines model for DocumentList.
+type DocumentList struct {
+	Documents []DocumentInfo `json:"documents"`
+}
+
+// DocumentName 1 to 64 characters of A-Z, a-z, 0-9, space, '_', '.' and '-',
+// starting with a letter or digit and not ending with a space.
+// Case-sensitive. Percent-encode spaces in the path.
+//
+// Examples: Morning
+type DocumentName = string
+
 // Error The body of every non-2xx response.
 type Error struct {
 	// Code Stable machine-readable reason in snake_case. Clients branch on
 	// this, never on message. Known codes: bad_request, unauthorized,
 	// forbidden, not_found, method_not_allowed, conflict,
-	// unsupported_media_type, internal, unavailable (a dependency such
-	// as the database did not answer; retry later).
+	// precondition_failed (an If-Match precondition does not hold),
+	// content_too_large, precondition_required (the request needs
+	// If-Match), unsupported_media_type, internal, unavailable (a
+	// dependency such as the database did not answer; retry later).
 	//
 	//
 	// Examples: not_found
@@ -281,6 +341,16 @@ type Me struct {
 	CSRFToken string `json:"csrfToken"`
 }
 
+// PutDocumentRequest defines model for PutDocumentRequest.
+type PutDocumentRequest struct {
+	// SchemaVersion The version of the client's schema for body.
+	SchemaVersion int32 `json:"schemaVersion"`
+
+	// Body The document itself: any JSON object, kept as written apart from
+	// insignificant whitespace. The server does not interpret it.
+	Body DocumentBody `json:"body"`
+}
+
 // Quote The latest level 1 snapshot of one instrument. A price of "0" or a
 // size of 0 means the feed did not provide it; last is "0" until the
 // first trade of the day.
@@ -376,14 +446,40 @@ type Source = domain.Source
 // Examples: EMAAR
 type Symbol = string
 
+// DocumentKindParam What a document holds, a workspace `layout` or a `chart_template`.
+type DocumentKindParam = DocumentKind
+
+// DocumentNameParam defines model for DocumentNameParam.
+type DocumentNameParam = string
+
+// IfMatch defines model for IfMatch.
+type IfMatch = string
+
 // csrfTokenContextKey is the context key for csrfToken security scheme
 type csrfTokenContextKey string
 
 // sessionCookieContextKey is the context key for sessionCookie security scheme
 type sessionCookieContextKey string
 
+// DeleteMyDocumentParams defines parameters for DeleteMyDocument.
+type DeleteMyDocumentParams struct {
+	// IfMatch `*` or a comma-separated list of entity tags, as returned in ETag.
+	// Weak tags (`W/"..."`) never match.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+}
+
+// PutMyDocumentParams defines parameters for PutMyDocument.
+type PutMyDocumentParams struct {
+	// IfMatch `*` or a comma-separated list of entity tags, as returned in ETag.
+	// Weak tags (`W/"..."`) never match.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+}
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
+
+// PutMyDocumentJSONRequestBody defines body for PutMyDocument for application/json ContentType.
+type PutMyDocumentJSONRequestBody = PutDocumentRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -402,6 +498,18 @@ type ServerInterface interface {
 	// GetMe Describe the signed-in account and its session
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// ListMyDocuments List the signed-in user's documents of one kind
+	// (GET /me/documents/{kind})
+	ListMyDocuments(w http.ResponseWriter, r *http.Request, kind DocumentKindParam)
+	// DeleteMyDocument Delete one of the signed-in user's documents
+	// (DELETE /me/documents/{kind}/{name})
+	DeleteMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam, params DeleteMyDocumentParams)
+	// GetMyDocument Get one of the signed-in user's documents
+	// (GET /me/documents/{kind}/{name})
+	GetMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam)
+	// PutMyDocument Create or replace one of the signed-in user's documents
+	// (PUT /me/documents/{kind}/{name})
+	PutMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam, params PutMyDocumentParams)
 	// GetOpenAPISpec Download this contract
 	// (GET /openapi.yaml)
 	GetOpenAPISpec(w http.ResponseWriter, r *http.Request)
@@ -438,6 +546,30 @@ func (_ Unimplemented) GetMarketStatus(w http.ResponseWriter, r *http.Request) {
 // GetMe Describe the signed-in account and its session
 // (GET /me)
 func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListMyDocuments List the signed-in user's documents of one kind
+// (GET /me/documents/{kind})
+func (_ Unimplemented) ListMyDocuments(w http.ResponseWriter, r *http.Request, kind DocumentKindParam) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteMyDocument Delete one of the signed-in user's documents
+// (DELETE /me/documents/{kind}/{name})
+func (_ Unimplemented) DeleteMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam, params DeleteMyDocumentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMyDocument Get one of the signed-in user's documents
+// (GET /me/documents/{kind}/{name})
+func (_ Unimplemented) GetMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// PutMyDocument Create or replace one of the signed-in user's documents
+// (PUT /me/documents/{kind}/{name})
+func (_ Unimplemented) PutMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam, params PutMyDocumentParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -537,6 +669,213 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMyDocuments operation middleware
+func (siw *ServerInterfaceWrapper) ListMyDocuments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind DocumentKindParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMyDocuments(w, r, kind)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMyDocument operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMyDocument(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind DocumentKindParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name DocumentNameParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CsrfTokenScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteMyDocumentParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMyDocument(w, r, kind, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMyDocument operation middleware
+func (siw *ServerInterfaceWrapper) GetMyDocument(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind DocumentKindParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name DocumentNameParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMyDocument(w, r, kind, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMyDocument operation middleware
+func (siw *ServerInterfaceWrapper) PutMyDocument(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind DocumentKindParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "name" -------------
+	var name DocumentNameParam
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CsrfTokenScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutMyDocumentParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMyDocument(w, r, kind, name, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -690,6 +1029,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/market/status", wrapper.GetMarketStatus)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/me/documents/{kind}", wrapper.ListMyDocuments)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/me/documents/{kind}/{name}", wrapper.DeleteMyDocument)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/me/documents/{kind}/{name}", wrapper.GetMyDocument)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/me/documents/{kind}/{name}", wrapper.PutMyDocument)
 	})
 
 	return r
@@ -962,6 +1313,298 @@ func (response GetMedefaultJSONResponse) VisitGetMeResponse(w http.ResponseWrite
 	return err
 }
 
+type ListMyDocumentsRequestObject struct {
+	Kind DocumentKindParam `json:"kind"`
+}
+
+type ListMyDocumentsResponseObject interface {
+	VisitListMyDocumentsResponse(w http.ResponseWriter) error
+}
+
+type ListMyDocuments200JSONResponse DocumentList
+
+func (response ListMyDocuments200JSONResponse) VisitListMyDocumentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMyDocumentsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListMyDocumentsdefaultJSONResponse) VisitListMyDocumentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMyDocumentRequestObject struct {
+	Kind   DocumentKindParam `json:"kind"`
+	Name   DocumentNameParam `json:"name"`
+	Params DeleteMyDocumentParams
+}
+
+type DeleteMyDocumentResponseObject interface {
+	VisitDeleteMyDocumentResponse(w http.ResponseWriter) error
+}
+
+type DeleteMyDocument204Response struct {
+}
+
+func (response DeleteMyDocument204Response) VisitDeleteMyDocumentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteMyDocument404JSONResponse Error
+
+func (response DeleteMyDocument404JSONResponse) VisitDeleteMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMyDocument412JSONResponse Error
+
+func (response DeleteMyDocument412JSONResponse) VisitDeleteMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(412)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMyDocument428JSONResponse Error
+
+func (response DeleteMyDocument428JSONResponse) VisitDeleteMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(428)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMyDocumentdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DeleteMyDocumentdefaultJSONResponse) VisitDeleteMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMyDocumentRequestObject struct {
+	Kind DocumentKindParam `json:"kind"`
+	Name DocumentNameParam `json:"name"`
+}
+
+type GetMyDocumentResponseObject interface {
+	VisitGetMyDocumentResponse(w http.ResponseWriter) error
+}
+
+type GetMyDocument200ResponseHeaders struct {
+	ETag string
+}
+
+type GetMyDocument200JSONResponse struct {
+	Body    Document
+	Headers GetMyDocument200ResponseHeaders
+}
+
+func (response GetMyDocument200JSONResponse) VisitGetMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", fmt.Sprint(response.Headers.ETag))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMyDocument404JSONResponse Error
+
+func (response GetMyDocument404JSONResponse) VisitGetMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMyDocumentdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetMyDocumentdefaultJSONResponse) VisitGetMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMyDocumentRequestObject struct {
+	Kind   DocumentKindParam `json:"kind"`
+	Name   DocumentNameParam `json:"name"`
+	Params PutMyDocumentParams
+	Body   *PutMyDocumentJSONRequestBody
+}
+
+type PutMyDocumentResponseObject interface {
+	VisitPutMyDocumentResponse(w http.ResponseWriter) error
+}
+
+type PutMyDocument200ResponseHeaders struct {
+	ETag string
+}
+
+type PutMyDocument200JSONResponse struct {
+	Body    DocumentInfo
+	Headers PutMyDocument200ResponseHeaders
+}
+
+func (response PutMyDocument200JSONResponse) VisitPutMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", fmt.Sprint(response.Headers.ETag))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMyDocument201ResponseHeaders struct {
+	ETag string
+}
+
+type PutMyDocument201JSONResponse struct {
+	Body    DocumentInfo
+	Headers PutMyDocument201ResponseHeaders
+}
+
+func (response PutMyDocument201JSONResponse) VisitPutMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", fmt.Sprint(response.Headers.ETag))
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMyDocument412JSONResponse Error
+
+func (response PutMyDocument412JSONResponse) VisitPutMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(412)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMyDocument413JSONResponse Error
+
+func (response PutMyDocument413JSONResponse) VisitPutMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMyDocument428JSONResponse Error
+
+func (response PutMyDocument428JSONResponse) VisitPutMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(428)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMyDocumentdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response PutMyDocumentdefaultJSONResponse) VisitPutMyDocumentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetOpenAPISpecRequestObject struct {
 }
 
@@ -1023,6 +1666,18 @@ type StrictServerInterface interface {
 	// GetMe Describe the signed-in account and its session
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// ListMyDocuments List the signed-in user's documents of one kind
+	// (GET /me/documents/{kind})
+	ListMyDocuments(ctx context.Context, request ListMyDocumentsRequestObject) (ListMyDocumentsResponseObject, error)
+	// DeleteMyDocument Delete one of the signed-in user's documents
+	// (DELETE /me/documents/{kind}/{name})
+	DeleteMyDocument(ctx context.Context, request DeleteMyDocumentRequestObject) (DeleteMyDocumentResponseObject, error)
+	// GetMyDocument Get one of the signed-in user's documents
+	// (GET /me/documents/{kind}/{name})
+	GetMyDocument(ctx context.Context, request GetMyDocumentRequestObject) (GetMyDocumentResponseObject, error)
+	// PutMyDocument Create or replace one of the signed-in user's documents
+	// (PUT /me/documents/{kind}/{name})
+	PutMyDocument(ctx context.Context, request PutMyDocumentRequestObject) (PutMyDocumentResponseObject, error)
 	// GetOpenAPISpec Download this contract
 	// (GET /openapi.yaml)
 	GetOpenAPISpec(ctx context.Context, request GetOpenAPISpecRequestObject) (GetOpenAPISpecResponseObject, error)
@@ -1187,6 +1842,122 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMeResponseObject); ok {
 		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListMyDocuments operation middleware
+func (sh *strictHandler) ListMyDocuments(w http.ResponseWriter, r *http.Request, kind DocumentKindParam) {
+	var request ListMyDocumentsRequestObject
+
+	request.Kind = kind
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMyDocuments(ctx, request.(ListMyDocumentsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMyDocuments")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMyDocumentsResponseObject); ok {
+		if err := validResponse.VisitListMyDocumentsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteMyDocument operation middleware
+func (sh *strictHandler) DeleteMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam, params DeleteMyDocumentParams) {
+	var request DeleteMyDocumentRequestObject
+
+	request.Kind = kind
+	request.Name = name
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteMyDocument(ctx, request.(DeleteMyDocumentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteMyDocument")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteMyDocumentResponseObject); ok {
+		if err := validResponse.VisitDeleteMyDocumentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMyDocument operation middleware
+func (sh *strictHandler) GetMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam) {
+	var request GetMyDocumentRequestObject
+
+	request.Kind = kind
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMyDocument(ctx, request.(GetMyDocumentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMyDocument")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMyDocumentResponseObject); ok {
+		if err := validResponse.VisitGetMyDocumentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutMyDocument operation middleware
+func (sh *strictHandler) PutMyDocument(w http.ResponseWriter, r *http.Request, kind DocumentKindParam, name DocumentNameParam, params PutMyDocumentParams) {
+	var request PutMyDocumentRequestObject
+
+	request.Kind = kind
+	request.Name = name
+	request.Params = params
+
+	var body PutMyDocumentJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutMyDocument(ctx, request.(PutMyDocumentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutMyDocument")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutMyDocumentResponseObject); ok {
+		if err := validResponse.VisitPutMyDocumentResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
