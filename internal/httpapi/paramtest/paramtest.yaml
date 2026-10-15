@@ -1,0 +1,134 @@
+# A test-only contract. It is not served. Router tests generate a server from
+# it to check how path, query, and body values bind to the domain types, using
+# the same router setup and error handlers as api/openapi.yaml.
+openapi: 3.1.0
+info:
+  title: Parameter binding test contract
+  version: 0.0.0
+
+paths:
+  /bars/{interval}:
+    get:
+      operationId: listBars
+      parameters:
+        - name: interval
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Interval"
+        - name: source
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Source"
+        - name: freshness
+          in: query
+          schema:
+            $ref: "#/components/schemas/Freshness"
+        - name: minPrice
+          in: query
+          description: A decimal query parameter is a plain string; the handler parses it.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The bound values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /orders:
+    post:
+      operationId: placeOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Order"
+      responses:
+        "200":
+          description: The decoded body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  responses:
+    Error:
+      description: The request failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    Interval:
+      type: string
+      enum: [1m, 1d]
+      x-go-type: domain.Interval
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Source:
+      type: string
+      enum: [ibkr, dfm-mw, dfm-history, self-recorded]
+      x-go-type: domain.Source
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Freshness:
+      type: string
+      enum: [realtime, delayed, eod]
+      x-go-type: domain.Freshness
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Currency:
+      type: string
+      enum: [AED, USD]
+      x-go-type: domain.Currency
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    Bound:
+      type: object
+      required: [interval, source]
+      properties:
+        interval:
+          $ref: "#/components/schemas/Interval"
+        source:
+          $ref: "#/components/schemas/Source"
+        freshness:
+          $ref: "#/components/schemas/Freshness"
+        minPrice:
+          type: string
+
+    Order:
+      type: object
+      required: [currency, quantity]
+      properties:
+        currency:
+          $ref: "#/components/schemas/Currency"
+        quantity:
+          type: integer
+          format: int64
