@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -69,7 +70,7 @@ func recoverPanics(logger *slog.Logger) func(http.Handler) http.Handler {
 				if rec == nil {
 					return
 				}
-				if rec == http.ErrAbortHandler {
+				if err, ok := rec.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(rec)
 				}
 				logger.LogAttrs(r.Context(), slog.LevelError, "http handler panicked",
