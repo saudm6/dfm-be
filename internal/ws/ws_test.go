@@ -545,6 +545,11 @@ func TestTopicAllowHook(t *testing.T) {
 
 func TestEndSessionOnNilGateway(t *testing.T) {
 	var g *ws.Gateway
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("EndSession() on a nil Gateway panicked: %v", r)
+		}
+	}()
 
 	g.EndSession(owner)
 }
