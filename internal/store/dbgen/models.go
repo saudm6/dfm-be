@@ -44,6 +44,22 @@ type Instrument struct {
 	UpdatedAt time.Time
 }
 
+type MarketWatchQuote struct {
+	Symbol      domain.Symbol
+	Last        decimal.Decimal
+	Bid         decimal.Decimal
+	Ask         decimal.Decimal
+	BidSize     int64
+	AskSize     int64
+	Volume      int64
+	Trades      int64
+	Value       decimal.Decimal
+	PrevClose   decimal.Decimal
+	LastTradeAt pgtype.Timestamptz
+	AsOf        time.Time
+	UpdatedAt   time.Time
+}
+
 type Order struct {
 	ClientOrderID     uuid.UUID
 	Symbol            domain.Symbol

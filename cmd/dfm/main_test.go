@@ -330,6 +330,52 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	}
 }
 
+func TestRunPollsTheMarketWatchAtStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv := dfmtest.NewServer(t, dfmtest.MarketWatchDir())
+	environ := []string{"DFM_HTTP_ADDR=127.0.0.1:0", "DFM_DATABASE_URL=" + storetest.NewURL(t), "DFM_API_BASE_URL=" + srv.URL}
+	logs, logw := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := run(ctx, nil, environ, strings.NewReader(""), logw)
+		_ = logw.Close()
+		done <- err
+	}()
+	listenAddr(t, logs)
+
+	dec := json.NewDecoder(logs)
+	var line struct {
+		Msg     string `json:"msg"`
+		Level   string `json:"level"`
+		RunID   string `json:"run_id"`
+		Lines   int    `json:"lines"`
+		Unknown int    `json:"unknown"`
+	}
+	for line.Msg != "market watch poll finished" {
+		if err := dec.Decode(&line); err != nil {
+			t.Fatalf("server never logged a market watch poll: %v", err)
+		}
+	}
+	// No instrument is synced yet, so every line and DFMGI are unknown.
+	if line.Level != "INFO" || line.RunID == "" || line.Lines != 484 || line.Unknown != 485 {
+		t.Errorf("poll log = %+v, want INFO with a run_id, 484 lines, 485 unknown", line)
+	}
+	go func() { _, _ = io.Copy(io.Discard, logs) }()
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("run() after cancel error = %v, want nil", err)
+	}
+	var paths []string
+	for _, r := range srv.Requests() {
+		paths = append(paths, r.Path)
+	}
+	if want := []string{"/mw/v1/stocks", "/mw/v1/status", "/mw/v1/indices"}; !slices.Equal(paths, want) {
+		t.Errorf("DFM requests = %v, want %v", paths, want)
+	}
+}
+
 func TestRunSyncInstruments(t *testing.T) {
 	clock = func() time.Time { return time.Date(2026, time.October, 15, 8, 0, 0, 0, time.UTC) }
 	t.Cleanup(func() { clock = time.Now })

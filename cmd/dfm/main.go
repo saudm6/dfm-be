@@ -9,7 +9,8 @@
 //
 // The server runs its background jobs next to the HTTP server, each on its
 // own goroutine in one errgroup bound to the run context: cancelling the
-// context, or any of them failing, stops all of them.
+// context, or any of them failing, stops all of them. The jobs are the daily
+// instrument sync and the market-watch poller.
 package main
 
 import (
@@ -33,6 +34,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/saudm6/dfm-be/internal/auth"
+	"github.com/saudm6/dfm-be/internal/bus"
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/config"
 	"github.com/saudm6/dfm-be/internal/dfm"
@@ -40,6 +42,7 @@ import (
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi"
 	"github.com/saudm6/dfm-be/internal/instruments"
+	"github.com/saudm6/dfm-be/internal/marketwatch"
 	"github.com/saudm6/dfm-be/internal/store"
 )
 
@@ -275,14 +278,26 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
+	dfmClient := newDFMClient(cfg.DFM.APIBaseURL)
+	events := bus.New()
+	preOpenLead := time.Duration(hours.Open-hours.PreOpen) * time.Minute
 	jobs := []job{
 		instruments.Job{
-			Sync:     instrumentSync(pool, newDFMClient(cfg.DFM.APIBaseURL)),
+			Sync:     instrumentSync(pool, dfmClient),
 			Calendar: cals,
-			Lead:     time.Duration(hours.Open-hours.PreOpen)*time.Minute + instrumentSyncBeforePreOpen,
+			Lead:     preOpenLead + instrumentSyncBeforePreOpen,
 			Logger:   logger,
 			Now:      func() time.Time { return clock() },
 		},
+		marketwatch.New(marketwatch.Options{
+			Source:      dfmClient,
+			DB:          pool,
+			Bus:         events,
+			Calendar:    cals,
+			PreOpenLead: preOpenLead,
+			Logger:      logger,
+			Now:         func() time.Time { return clock() },
+		}),
 	}
 	logger.Info("http server listening", "addr", ln.Addr().String())
 	return runServer(ctx, logger, srv, ln, jobs)
