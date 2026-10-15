@@ -2,12 +2,26 @@ package config_test
 
 import (
 	"log/slog"
+	"reflect"
 	"testing"
+	"time"
 
+	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/config"
 )
 
 const dbURL = "postgres://dfm:dfm@localhost:5432/dfm?sslmode=disable"
+
+var defaultMarket = config.Market{
+	PreOpen:        9*60 + 30,
+	Open:           10 * 60,
+	ClosingAuction: 14*60 + 45,
+	Close:          15 * 60,
+	TradingDays: []calendar.Weekday{
+		calendar.Weekday(time.Monday), calendar.Weekday(time.Tuesday), calendar.Weekday(time.Wednesday),
+		calendar.Weekday(time.Thursday), calendar.Weekday(time.Friday),
+	},
+}
 
 func TestLoad(t *testing.T) {
 	tests := []struct {
@@ -21,14 +35,29 @@ func TestLoad(t *testing.T) {
 			want: config.Config{
 				HTTPAddr: ":8080",
 				Base:     config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
+				Market:   defaultMarket,
 			},
 		},
 		{
-			name:    "all set",
-			environ: []string{"DFM_HTTP_ADDR=127.0.0.1:9000", "DFM_LOG_LEVEL=debug", "DFM_DATABASE_URL=" + dbURL},
+			name: "all set",
+			environ: []string{
+				"DFM_HTTP_ADDR=127.0.0.1:9000", "DFM_LOG_LEVEL=debug", "DFM_DATABASE_URL=" + dbURL,
+				"DFM_SESSION_PRE_OPEN=09:00", "DFM_SESSION_OPEN=09:30", "DFM_SESSION_CLOSING_AUCTION=13:45",
+				"DFM_SESSION_CLOSE=14:00", "DFM_TRADING_DAYS=Sun,Mon,Tue,Wed,Thu",
+			},
 			want: config.Config{
 				HTTPAddr: "127.0.0.1:9000",
 				Base:     config.Base{LogLevel: slog.LevelDebug, DatabaseURL: dbURL},
+				Market: config.Market{
+					PreOpen:        9 * 60,
+					Open:           9*60 + 30,
+					ClosingAuction: 13*60 + 45,
+					Close:          14 * 60,
+					TradingDays: []calendar.Weekday{
+						calendar.Weekday(time.Sunday), calendar.Weekday(time.Monday), calendar.Weekday(time.Tuesday),
+						calendar.Weekday(time.Wednesday), calendar.Weekday(time.Thursday),
+					},
+				},
 			},
 		},
 	}
@@ -38,7 +67,7 @@ func TestLoad(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Load() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -70,6 +99,21 @@ func TestLoadErrors(t *testing.T) {
 			name:    "invalid log level",
 			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_LOG_LEVEL=loud", "DFM_DATABASE_URL=" + dbURL},
 			wantErr: `config: env: parse error on field "LogLevel" of type "slog.Level": slog: level string "loud": unknown name`,
+		},
+		{
+			name:    "invalid session time",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_SESSION_OPEN=10am"},
+			wantErr: `config: env: parse error on field "Open" of type "calendar.TimeOfDay": calendar: time of day "10am" is not HH:MM`,
+		},
+		{
+			name:    "sessions out of order",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_SESSION_CLOSE=14:00"},
+			wantErr: `config: calendar: sessions 09:30, 10:00, 14:45, 14:00 are not in order within one day`,
+		},
+		{
+			name:    "unknown trading day",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_TRADING_DAYS=Mon,Funday"},
+			wantErr: `config: env: parse error on field "TradingDays" of type "[]calendar.Weekday": calendar: "Funday" is not a day of the week`,
 		},
 	}
 	for _, tt := range tests {

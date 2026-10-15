@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/shopspring/decimal"
 )
@@ -142,7 +143,9 @@ type Decimal = decimal.Decimal
 type Error struct {
 	// Code Stable machine-readable reason in snake_case. Clients branch on
 	// this, never on message. Known codes: bad_request, unauthorized,
-	// forbidden, not_found, method_not_allowed, conflict, internal.
+	// forbidden, not_found, method_not_allowed, conflict, internal,
+	// unavailable (a dependency such as the database did not answer;
+	// retry later).
 	//
 	//
 	// Examples: not_found
@@ -222,6 +225,30 @@ type InstrumentStatus = domain.InstrumentStatus
 
 // Interval Bar length, one minute or one trading day.
 type Interval = domain.Interval
+
+// MarketSession The phase of the DFM trading day in Asia/Dubai: pre-open from 09:30,
+// continuous from 10:00, closing-auction from 14:45 (DFM's pre-closing
+// and trade-at-last sessions), and closed from 15:00 and on days DFM
+// does not trade. The times are the defaults; the server's config sets
+// them.
+type MarketSession = calendar.Session
+
+// MarketStatus defines model for MarketStatus.
+type MarketStatus struct {
+	// Session The phase of the DFM trading day in Asia/Dubai: pre-open from 09:30,
+	// continuous from 10:00, closing-auction from 14:45 (DFM's pre-closing
+	// and trade-at-last sessions), and closed from 15:00 and on days DFM
+	// does not trade. The times are the defaults; the server's config sets
+	// them.
+	Session MarketSession `json:"session"`
+
+	// NextOpen The next start of continuous trading strictly after now, in
+	// +04:00. This is the continuous open, not the pre-open.
+	//
+	//
+	// Examples: 2026-10-19T10:00:00+04:00
+	NextOpen time.Time `json:"nextOpen"`
+}
 
 // Quote The latest level 1 snapshot of one instrument. A price of "0" or a
 // size of 0 means the feed did not provide it; last is "0" until the
@@ -319,6 +346,9 @@ type ServerInterface interface {
 	// GetHealth Report whether the service and its database are up
 	// (GET /healthz)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// GetMarketStatus Report the DFM session now and when continuous trading next opens
+	// (GET /market/status)
+	GetMarketStatus(w http.ResponseWriter, r *http.Request)
 	// GetOpenAPISpec Download this contract
 	// (GET /openapi.yaml)
 	GetOpenAPISpec(w http.ResponseWriter, r *http.Request)
@@ -331,6 +361,12 @@ type Unimplemented struct{}
 // GetHealth Report whether the service and its database are up
 // (GET /healthz)
 func (_ Unimplemented) GetHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMarketStatus Report the DFM session now and when continuous trading next opens
+// (GET /market/status)
+func (_ Unimplemented) GetMarketStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -354,6 +390,20 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMarketStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetMarketStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMarketStatus(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -496,6 +546,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/openapi.yaml", wrapper.GetOpenAPISpec)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/market/status", wrapper.GetMarketStatus)
+	})
 
 	return r
 }
@@ -543,6 +596,58 @@ type GetHealthdefaultJSONResponse struct {
 }
 
 func (response GetHealthdefaultJSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMarketStatusRequestObject struct {
+}
+
+type GetMarketStatusResponseObject interface {
+	VisitGetMarketStatusResponse(w http.ResponseWriter) error
+}
+
+type GetMarketStatus200JSONResponse MarketStatus
+
+func (response GetMarketStatus200JSONResponse) VisitGetMarketStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMarketStatus503JSONResponse Error
+
+func (response GetMarketStatus503JSONResponse) VisitGetMarketStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMarketStatusdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetMarketStatusdefaultJSONResponse) VisitGetMarketStatusResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -603,6 +708,9 @@ type StrictServerInterface interface {
 	// GetHealth Report whether the service and its database are up
 	// (GET /healthz)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// GetMarketStatus Report the DFM session now and when continuous trading next opens
+	// (GET /market/status)
+	GetMarketStatus(ctx context.Context, request GetMarketStatusRequestObject) (GetMarketStatusResponseObject, error)
 	// GetOpenAPISpec Download this contract
 	// (GET /openapi.yaml)
 	GetOpenAPISpec(ctx context.Context, request GetOpenAPISpecRequestObject) (GetOpenAPISpecResponseObject, error)
@@ -664,6 +772,30 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
 		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMarketStatus operation middleware
+func (sh *strictHandler) GetMarketStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetMarketStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMarketStatus(ctx, request.(GetMarketStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMarketStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMarketStatusResponseObject); ok {
+		if err := validResponse.VisitGetMarketStatusResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

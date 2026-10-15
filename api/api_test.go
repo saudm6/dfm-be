@@ -7,6 +7,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 
 	"github.com/saudm6/dfm-be/api"
+	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/domain"
 )
 
@@ -45,6 +46,7 @@ func TestSpecEnumsMatchDomain(t *testing.T) {
 		{"Interval", []string{"1m", "1d"}, parser(domain.ParseInterval)},
 		{"InstrumentClass", []string{"equity", "etf", "reit", "fund", "bond", "sukuk", "future"}, parser(domain.ParseInstrumentClass)},
 		{"InstrumentStatus", []string{"listed", "suspended", "delisted", "matured"}, parser(domain.ParseInstrumentStatus)},
+		{"MarketSession", []string{"pre-open", "continuous", "closing-auction", "closed"}, parser(calendar.ParseSession)},
 	}
 	schemas := loadSpec(t).Components.Schemas
 	for _, tt := range tests {
