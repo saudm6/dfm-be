@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/config"
+	"github.com/saudm6/dfm-be/internal/dfm/dfmtest"
 	"github.com/saudm6/dfm-be/internal/domain"
+	"github.com/saudm6/dfm-be/internal/instruments"
 	"github.com/saudm6/dfm-be/internal/store"
 	"github.com/saudm6/dfm-be/internal/store/storetest"
 )
@@ -81,6 +86,18 @@ func TestRunErrors(t *testing.T) {
 			args:    []string{"calendar", "close", "--date", "9999-01-01"},
 			environ: nil,
 			wantErr: "calendar close: --date 9999-01-01 is more than 2 years ahead; the last day accepted is 2028-10-15",
+		},
+		{
+			name:    "sync of an unknown kind",
+			args:    []string{"sync", "prices"},
+			environ: nil,
+			wantErr: usage,
+		},
+		{
+			name:    "sync instruments without database url",
+			args:    []string{"sync", "instruments"},
+			environ: nil,
+			wantErr: `config: env: required environment variable "DFM_DATABASE_URL" is not set`,
 		},
 		{
 			name:    "calendar close without database url",
@@ -225,7 +242,24 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	}()
 
 	addr := listenAddr(t, logs)
-	go func() { _, _ = io.Copy(io.Discard, logs) }()
+	scheduled := make(chan string, 1)
+	go func() {
+		dec := json.NewDecoder(logs)
+		for {
+			var line struct {
+				Msg string `json:"msg"`
+				At  string `json:"at"`
+			}
+			if dec.Decode(&line) != nil {
+				close(scheduled)
+				_, _ = io.Copy(io.Discard, logs)
+				return
+			}
+			if line.Msg == "instrument sync scheduled" {
+				scheduled <- line.At
+			}
+		}
+	}()
 
 	status, body := get(ctx, t, "http://"+addr+"/healthz")
 	if want := "{\"status\":\"ok\",\"db\":\"ok\"}\n"; status != http.StatusOK || body != want {
@@ -248,10 +282,115 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 		t.Errorf("nextOpen = %s, want a later 10:00 +04:00", market.NextOpen.Format(time.RFC3339))
 	}
 
+	at, err := time.Parse(time.RFC3339, <-scheduled)
+	if err != nil || at.Format("15:04 -07:00") != "09:00 +04:00" || !at.After(before) {
+		t.Errorf("instrument sync scheduled at %s (%v), want a later 09:00 +04:00", at, err)
+	}
+
 	cancel()
 	if err := <-done; err != nil {
 		t.Errorf("run() after cancel error = %v, want nil", err)
 	}
+}
+
+func TestRunSyncInstruments(t *testing.T) {
+	clock = func() time.Time { return time.Date(2026, time.October, 15, 8, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { clock = time.Now })
+	url := storetest.NewURL(t)
+	if err := run(t.Context(), []string{"migrate"}, []string{"DFM_DATABASE_URL=" + url}, io.Discard); err != nil {
+		t.Fatalf("run(migrate) error = %v", err)
+	}
+	srv := dfmtest.NewServer(t, dfmtest.SecurityMasterDir())
+	// Two lines keep the 2-per-second overview calls quick.
+	srv.Replace("lite-securities-lists-en.json", writeFile(t, `{"Equities":[
+		{"ID":"04e697f7-f602-6339-b0d9-ff00009be840","SecuritySymbol":"EMAAR","FullName":"Emaar Properties PJSC","Exchange":"DFM","Sector":"Real Estate","SecurityType":"Equity"},
+		{"ID":"c8e597f7-f602-6339-b0d9-ff00009be840","SecuritySymbol":"EIB","FullName":"Emirates Islamic Bank PJSC","Exchange":"DFM","Sector":"Financials","SecurityType":"Equity"}]}`))
+	environ := []string{"DFM_DATABASE_URL=" + url, "DFM_API_BASE_URL=" + srv.URL}
+	tests := []struct {
+		name    string
+		wantLog string
+	}{
+		{"first sync", "instrument sync finished|11|11|8|8|0"},
+		{"no upstream change", "instrument sync finished|11|0|8|0|0"},
+	}
+	runIDs := map[string]bool{}
+	for _, tt := range tests {
+		var logs bytes.Buffer
+		if err := run(t.Context(), []string{"sync", "instruments"}, environ, &logs); err != nil {
+			t.Fatalf("%s: run(sync instruments) error = %v", tt.name, err)
+		}
+		var line struct {
+			Msg           string `json:"msg"`
+			RunID         string `json:"run_id"`
+			Instruments   int    `json:"instruments"`
+			Written       int    `json:"written"`
+			Boards        int    `json:"boards"`
+			BoardsWritten int    `json:"boards_written"`
+			Skipped       int    `json:"skipped"`
+		}
+		if err := json.Unmarshal(logs.Bytes(), &line); err != nil {
+			t.Fatalf("%s: decode log %q: %v", tt.name, logs.String(), err)
+		}
+		got := fmt.Sprintf("%s|%d|%d|%d|%d|%d", line.Msg, line.Instruments, line.Written, line.Boards, line.BoardsWritten, line.Skipped)
+		if got != tt.wantLog {
+			t.Errorf("%s: log = %q, want %q", tt.name, got, tt.wantLog)
+		}
+		if line.RunID == "" || runIDs[line.RunID] {
+			t.Errorf("%s: run_id = %q, want a new id", tt.name, line.RunID)
+		}
+		runIDs[line.RunID] = true
+	}
+
+	pool, err := store.Open(t.Context(), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	emaar, err := instruments.Get(t.Context(), pool, "EMAAR")
+	if err != nil {
+		t.Fatalf("Get(EMAAR) error = %v", err)
+	}
+	if got := fmt.Sprintf("%s %s %s %s", emaar.ISIN, emaar.Sector, emaar.Class, emaar.Exchange); got != "AEE000301011 Real Estate equity DFM" {
+		t.Errorf("EMAAR = %q, want %q", got, "AEE000301011 Real Estate equity DFM")
+	}
+}
+
+func TestRunSyncInstrumentsFails(t *testing.T) {
+	url := storetest.NewURL(t)
+	if err := run(t.Context(), []string{"migrate"}, []string{"DFM_DATABASE_URL=" + url}, io.Discard); err != nil {
+		t.Fatalf("run(migrate) error = %v", err)
+	}
+	srv := dfmtest.NewServer(t, dfmtest.SecurityMasterDir())
+	srv.FailNext("/web/widgets/v1/data", http.StatusForbidden)
+	var logs bytes.Buffer
+
+	err := run(t.Context(), []string{"sync", "instruments"}, []string{"DFM_DATABASE_URL=" + url, "DFM_API_BASE_URL=" + srv.URL}, &logs)
+
+	want := "instruments: fetch security master: dfm: /web/widgets/v1/data: unexpected status 403"
+	if err == nil || err.Error() != want {
+		t.Fatalf("run(sync instruments) error = %v, want %q", err, want)
+	}
+	var line struct {
+		Level string `json:"level"`
+		Msg   string `json:"msg"`
+		RunID string `json:"run_id"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(logs.Bytes(), &line); err != nil {
+		t.Fatalf("decode log %q: %v", logs.String(), err)
+	}
+	if line.Level != "ERROR" || line.Msg != "instrument sync failed" || line.RunID == "" || line.Error != want {
+		t.Errorf("log = %+v, want an ERROR with the run id and %q", line, want)
+	}
+}
+
+func writeFile(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "body.json")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 func get(ctx context.Context, t *testing.T, url string) (status int, body string) {

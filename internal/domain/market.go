@@ -74,10 +74,18 @@ func (e *Exchange) Bind(src string) error { return unmarshalText(e, ParseExchang
 // Currency is the ISO 4217 code an instrument trades in.
 type Currency string
 
-// Currencies of DFM and Nasdaq Dubai listings.
+// Currencies of DFM and Nasdaq Dubai listings. Equities trade in AED or
+// USD; the other codes are the currencies of bond and sukuk lines in DFM's
+// security master.
 const (
 	CurrencyAED Currency = "AED"
 	CurrencyUSD Currency = "USD"
+	CurrencyEUR Currency = "EUR"
+	CurrencyGBP Currency = "GBP"
+	CurrencyCNY Currency = "CNY"
+	CurrencyAUD Currency = "AUD"
+	CurrencyHKD Currency = "HKD"
+	CurrencyNZD Currency = "NZD"
 )
 
 // ParseCurrency returns the Currency named s.
@@ -86,7 +94,7 @@ func ParseCurrency(s string) (Currency, error) { return parseEnum[Currency]("cur
 // Valid reports whether c is a known currency.
 func (c Currency) Valid() bool {
 	switch c {
-	case CurrencyAED, CurrencyUSD:
+	case CurrencyAED, CurrencyUSD, CurrencyEUR, CurrencyGBP, CurrencyCNY, CurrencyAUD, CurrencyHKD, CurrencyNZD:
 		return true
 	}
 	return false

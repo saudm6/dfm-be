@@ -145,9 +145,9 @@ func TestBinding(t *testing.T) {
 			name:       "unknown body enum",
 			method:     http.MethodPost,
 			target:     "/orders",
-			body:       `{"currency":"EUR","quantity":100}`,
+			body:       `{"currency":"JPY","quantity":100}`,
 			wantStatus: http.StatusBadRequest,
-			wantBody:   `{"code":"bad_request","message":"request body: invalid currency: unknown value \"EUR\""}`,
+			wantBody:   `{"code":"bad_request","message":"request body: invalid currency: unknown value \"JPY\""}`,
 		},
 		{
 			name:       "body field of the wrong type",

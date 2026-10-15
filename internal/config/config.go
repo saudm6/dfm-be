@@ -17,6 +17,19 @@ type Config struct {
 	HTTPAddr string `env:"DFM_HTTP_ADDR,required,notEmpty"`
 	Base
 	Market Market
+	DFM    DFM
+}
+
+// DFM is where the service reads DFM's public web API.
+type DFM struct {
+	// APIBaseURL is the origin of the API.
+	APIBaseURL string `env:"DFM_API_BASE_URL" envDefault:"https://api2.dfm.ae"`
+}
+
+// Sync is the configuration of `dfm sync`.
+type Sync struct {
+	Base
+	DFM DFM
 }
 
 // Market is the DFM trading day in Asia/Dubai time. The defaults are the
@@ -62,6 +75,11 @@ func Load(environ []string) (Config, error) {
 		return Config{}, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
+}
+
+// LoadSync parses the variables of Sync from environ.
+func LoadSync(environ []string) (Sync, error) {
+	return parse[Sync](environ)
 }
 
 // LoadBase parses only the variables in Base from environ.

@@ -3,6 +3,11 @@
 // With no arguments it migrates the database and serves the HTTP API.
 // "dfm migrate" applies pending database migrations and exits.
 // "dfm calendar close --date YYYY-MM-DD" records an unscheduled closure of DFM.
+// "dfm sync instruments" refreshes the security master from DFM's web API.
+//
+// The server runs its background jobs next to the HTTP server, each on its
+// own goroutine in one errgroup bound to the run context: cancelling the
+// context, or any of them failing, stops all of them.
 package main
 
 import (
@@ -19,18 +24,25 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/config"
+	"github.com/saudm6/dfm-be/internal/dfm"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi"
+	"github.com/saudm6/dfm-be/internal/instruments"
 	"github.com/saudm6/dfm-be/internal/store"
 )
 
 const (
 	shutdownTimeout = 10 * time.Second
-	usage           = `usage: dfm [migrate | calendar close --date YYYY-MM-DD [--reason TEXT]]`
+	usage           = `usage: dfm [migrate | calendar close --date YYYY-MM-DD [--reason TEXT] | sync instruments]`
+	// instrumentSyncBeforePreOpen is how long before the pre-open session
+	// the daily instrument sync starts.
+	instrumentSyncBeforePreOpen = 30 * time.Minute
 )
 
 // clock is the time source of every command; tests replace it.
@@ -55,6 +67,8 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) error {
 		return migrate(ctx, environ, stdout)
 	case len(args) >= 2 && args[0] == "calendar" && args[1] == "close":
 		return closeMarket(ctx, args[2:], environ, stdout)
+	case len(args) == 2 && args[0] == "sync" && args[1] == "instruments":
+		return syncInstruments(ctx, environ, stdout)
 	default:
 		return errors.New(usage)
 	}
@@ -121,6 +135,40 @@ func parseClosureDate(s string, now time.Time) (time.Time, error) {
 	return day, nil
 }
 
+// syncInstruments refreshes the security master once.
+func syncInstruments(ctx context.Context, environ []string, stdout io.Writer) error {
+	cfg, err := config.LoadSync(environ)
+	if err != nil {
+		return err
+	}
+	logger := newLogger(stdout, cfg.LogLevel).With("run_id", uuid.NewString())
+	pool, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := instrumentSync(pool, &dfm.Client{BaseURL: cfg.DFM.APIBaseURL})(ctx, logger); err != nil {
+		logger.ErrorContext(ctx, "instrument sync failed", "error", err)
+		return err
+	}
+	return nil
+}
+
+// instrumentSync returns a sync of the security master from src into pool
+// that logs its counts.
+func instrumentSync(pool *pgxpool.Pool, src instruments.Source) func(context.Context, *slog.Logger) error {
+	return func(ctx context.Context, logger *slog.Logger) error {
+		res, err := instruments.Sync(ctx, pool, src, clock(), logger)
+		if err != nil {
+			return err
+		}
+		logger.InfoContext(ctx, "instrument sync finished",
+			"instruments", res.Instruments, "written", res.Written, "delisted", res.Delisted,
+			"boards", res.Boards, "boards_written", res.BoardsWritten, "skipped", res.Skipped)
+		return nil
+	}
+}
+
 // migrate applies pending migrations and exits.
 func migrate(ctx context.Context, environ []string, stdout io.Writer) error {
 	cfg, err := config.LoadBase(environ)
@@ -136,8 +184,8 @@ func migrate(ctx context.Context, environ []string, stdout io.Writer) error {
 	return applyMigrations(ctx, logger, pool)
 }
 
-// serve migrates the database, then serves the HTTP API until ctx is
-// cancelled and shuts down gracefully.
+// serve migrates the database, then serves the HTTP API and runs the
+// background jobs until ctx is cancelled, and shuts down gracefully.
 func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	cfg, err := config.Load(environ)
 	if err != nil {
@@ -159,28 +207,58 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
+	hours := cfg.Market.Hours()
+	cals := calendar.Loader{DB: pool, Hours: hours}
 	srv := &http.Server{
-		Handler:           httpapi.NewRouter(logger, pool, calendar.Loader{DB: pool, Hours: cfg.Market.Hours()}, clock),
+		Handler:           httpapi.NewRouter(logger, pool, cals, clock),
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve(ln) }()
+	jobs := []job{
+		instruments.Job{
+			Sync:     instrumentSync(pool, &dfm.Client{BaseURL: cfg.DFM.APIBaseURL}),
+			Calendar: cals,
+			Lead:     time.Duration(hours.Open-hours.PreOpen)*time.Minute + instrumentSyncBeforePreOpen,
+			Logger:   logger,
+			Now:      func() time.Time { return clock() },
+		},
+	}
 	logger.Info("http server listening", "addr", ln.Addr().String())
+	return runServer(ctx, logger, srv, ln, jobs)
+}
 
-	select {
-	case err := <-serveErr:
-		return fmt.Errorf("serve http: %w", err)
-	case <-ctx.Done():
-	}
+// job is a background task of the server. Run returns nil once ctx is
+// cancelled, and an error only when the task cannot go on; it logs and
+// retries failures it can recover from.
+type job interface {
+	Run(ctx context.Context) error
+}
 
-	logger.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shut down http server: %w", err)
+// runServer serves srv on ln and runs jobs, each on its own goroutine, until
+// ctx is cancelled or one of them fails. Then the jobs' context is cancelled
+// and srv shuts down gracefully. It returns the first failure.
+func runServer(ctx context.Context, logger *slog.Logger, srv *http.Server, ln net.Listener, jobs []job) error {
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve http: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		<-gctx.Done()
+		logger.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shut down http server: %w", err)
+		}
+		return nil
+	})
+	for _, j := range jobs {
+		g.Go(func() error { return j.Run(gctx) })
 	}
-	return nil
+	return g.Wait()
 }
 
 func newLogger(w io.Writer, level slog.Level) *slog.Logger {

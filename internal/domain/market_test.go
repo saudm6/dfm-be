@@ -142,7 +142,8 @@ func TestEnumBind(t *testing.T) {
 		{name: "exchange", bind: bind[domain.Exchange], in: "NASDAQ_DUBAI", want: "NASDAQ_DUBAI"},
 		{name: "exchange unknown", bind: bind[domain.Exchange], in: "ADX", wantErr: `domain: invalid exchange: unknown value "ADX"`},
 		{name: "currency", bind: bind[domain.Currency], in: "USD", want: "USD"},
-		{name: "currency unknown", bind: bind[domain.Currency], in: "EUR", wantErr: `domain: invalid currency: unknown value "EUR"`},
+		{name: "currency of a bond line", bind: bind[domain.Currency], in: "NZD", want: "NZD"},
+		{name: "currency unknown", bind: bind[domain.Currency], in: "JPY", wantErr: `domain: invalid currency: unknown value "JPY"`},
 		{name: "freshness", bind: bind[domain.Freshness], in: "realtime", want: "realtime"},
 		{name: "freshness unknown", bind: bind[domain.Freshness], in: "stale", wantErr: `domain: invalid freshness: unknown value "stale"`},
 		{name: "source", bind: bind[domain.Source], in: "ibkr", want: "ibkr"},
@@ -151,7 +152,8 @@ func TestEnumBind(t *testing.T) {
 		{name: "interval unknown", bind: bind[domain.Interval], in: "5m", wantErr: `domain: invalid interval: unknown value "5m"`},
 		{name: "interval empty", bind: bind[domain.Interval], in: "", wantErr: `domain: invalid interval: unknown value ""`},
 		{name: "class", bind: bind[domain.InstrumentClass], in: "sukuk", want: "sukuk"},
-		{name: "class unknown", bind: bind[domain.InstrumentClass], in: "index", wantErr: `domain: invalid instrument class: unknown value "index"`},
+		{name: "class index", bind: bind[domain.InstrumentClass], in: "index", want: "index"},
+		{name: "class unknown", bind: bind[domain.InstrumentClass], in: "warrant", wantErr: `domain: invalid instrument class: unknown value "warrant"`},
 		{name: "status", bind: bind[domain.InstrumentStatus], in: "delisted", want: "delisted"},
 		{name: "status unknown", bind: bind[domain.InstrumentStatus], in: "halted", wantErr: `domain: invalid instrument status: unknown value "halted"`},
 	}
@@ -256,7 +258,7 @@ func TestEnumJSON(t *testing.T) {
 		in   string
 	}{
 		{name: "exchange", in: `{"Exchange":"ADX"}`},
-		{name: "currency", in: `{"Currency":"EUR"}`},
+		{name: "currency", in: `{"Currency":"JPY"}`},
 		{name: "freshness", in: `{"Freshness":"live"}`},
 		{name: "source", in: `{"Source":"yahoo"}`},
 		{name: "interval", in: `{"Interval":"5m"}`},

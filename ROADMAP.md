@@ -62,7 +62,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 ### F01 Security master, search, and command line
 
-- [ ] **16.** [dfm-be#10](https://github.com/saudm6/dfm-be/issues/10) Ingest the DFM security master. Wave 4. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)), step 8 ([dfm-be#8](https://github.com/saudm6/dfm-be/issues/8)).
+- [x] **16.** [dfm-be#10](https://github.com/saudm6/dfm-be/issues/10) Ingest the DFM security master. Wave 4. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)), step 8 ([dfm-be#8](https://github.com/saudm6/dfm-be/issues/8)).
 - [ ] **17.** [dfm-be#11](https://github.com/saudm6/dfm-be/issues/11) Add instrument search and description endpoints. Wave 5. Waits on step 4 ([dfm-be#4](https://github.com/saudm6/dfm-be/issues/4)), step 16 ([dfm-be#10](https://github.com/saudm6/dfm-be/issues/10)).
 - **18.** [dfm-fe#7](https://github.com/saudm6/dfm-fe/issues/7) Build the command line and function registry. Wave 8. Waits on step 15 ([dfm-fe#6](https://github.com/saudm6/dfm-fe/issues/6)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).
 - **19.** [dfm-fe#8](https://github.com/saudm6/dfm-fe/issues/8) Autocomplete instruments and functions. Wave 9. Waits on step 17 ([dfm-be#11](https://github.com/saudm6/dfm-be/issues/11)), step 18 ([dfm-fe#7](https://github.com/saudm6/dfm-fe/issues/7)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).

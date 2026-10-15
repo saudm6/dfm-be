@@ -13,10 +13,34 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type Board struct {
+	Code      string
+	Exchanges []string
+	Classes   []string
+	Lines     int32
+	UpdatedAt time.Time
+}
+
 type Holiday struct {
 	Day    pgtype.Date
 	Reason string
 	Kind   string
+}
+
+type Instrument struct {
+	Symbol    domain.Symbol
+	Exchange  domain.Exchange
+	Isin      string
+	NameEn    string
+	NameAr    string
+	Class     domain.InstrumentClass
+	Currency  domain.Currency
+	Sector    string
+	Board     string
+	Status    domain.InstrumentStatus
+	ListedAt  pgtype.Timestamptz
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Order struct {
