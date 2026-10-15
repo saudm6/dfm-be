@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -67,13 +68,15 @@ func newAuthFixture(t *testing.T) authFixture {
 }
 
 type response struct {
-	status    int
-	setCookie string
-	body      string
+	status       int
+	setCookie    string
+	cacheControl string
+	body         string
 }
 
-// call sends a request to srv. A non-nil cookie is sent, and csrf, when not
-// empty, goes in the X-CSRF-Token header.
+// call sends a request to srv. A body is sent as application/json, a
+// non-nil cookie is sent, and csrf, when not empty, goes in the X-CSRF-Token
+// header.
 func call(t *testing.T, srv *httptest.Server, method, path string, cookie *http.Cookie, csrf, body string) response {
 	t.Helper()
 	var rd io.Reader
@@ -93,16 +96,26 @@ func call(t *testing.T, srv *httptest.Server, method, path string, cookie *http.
 	if csrf != "" {
 		req.Header.Set("X-CSRF-Token", csrf)
 	}
+	return send(t, srv, req)
+}
+
+func send(t *testing.T, srv *httptest.Server, req *http.Request) response {
+	t.Helper()
 	resp, err := srv.Client().Do(req)
 	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
+		t.Fatalf("%s %s: %v", req.Method, req.URL.Path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return response{status: resp.StatusCode, setCookie: resp.Header.Get("Set-Cookie"), body: string(b)}
+	return response{
+		status:       resp.StatusCode,
+		setCookie:    resp.Header.Get("Set-Cookie"),
+		cacheControl: resp.Header.Get("Cache-Control"),
+		body:         string(b),
+	}
 }
 
 // login signs in through POST /auth/login and returns the session cookie and
@@ -144,6 +157,9 @@ func TestLoginMeLogout(t *testing.T) {
 	if resp.setCookie != wantSetCookie {
 		t.Errorf("Set-Cookie = %q, want %q", resp.setCookie, wantSetCookie)
 	}
+	if resp.cacheControl != "no-store" {
+		t.Errorf("login Cache-Control = %q, want %q", resp.cacheControl, "no-store")
+	}
 	var me struct {
 		CSRFToken string `json:"csrfToken"`
 	}
@@ -156,8 +172,8 @@ func TestLoginMeLogout(t *testing.T) {
 	}
 	session := &http.Cookie{Name: cookie.Name, Value: cookie.Value}
 
-	if got := call(t, srv, http.MethodGet, "/me", session, "", ""); got.status != http.StatusOK || got.body != wantMe {
-		t.Errorf("GET /me = %d %q, want 200 %q", got.status, got.body, wantMe)
+	if got := call(t, srv, http.MethodGet, "/me", session, "", ""); got.status != http.StatusOK || got.body != wantMe || got.cacheControl != "no-store" {
+		t.Errorf("GET /me = %d %q Cache-Control %q, want 200 %q no-store", got.status, got.body, got.cacheControl, wantMe)
 	}
 
 	tests := []struct {
@@ -231,6 +247,92 @@ func TestLoginFailures(t *testing.T) {
 	}
 	if rows != 0 {
 		t.Errorf("sessions after failed logins = %d, want 0", rows)
+	}
+}
+
+// Login refuses bodies that are not JSON or are too large before it checks
+// the password, so a cross-site form cannot sign a browser in and large
+// input never reaches the password hash.
+func TestLoginRequestLimits(t *testing.T) {
+	f := newAuthFixture(t)
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, f.sessions))
+	defer srv.Close()
+	body := `{"username":"saud","password":"` + password + `"}`
+	unsupported := `{"code":"unsupported_media_type","message":"send the login request as application/json"}` + "\n"
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		wantStatus  int
+		wantBody    string
+	}{
+		{"no content type", "", body, http.StatusUnsupportedMediaType, unsupported},
+		{"form", "application/x-www-form-urlencoded", "username=saud&password=x", http.StatusUnsupportedMediaType, unsupported},
+		{"text", "text/plain", body, http.StatusUnsupportedMediaType, unsupported},
+		{"malformed content type", "application/json; charset", body, http.StatusUnsupportedMediaType, unsupported},
+		{
+			"body over 4096 bytes", "application/json", `{"username":"saud","password":"` + strings.Repeat("x", 4096) + `"}`,
+			http.StatusBadRequest, `{"code":"bad_request","message":"request body is larger than 4096 bytes"}` + "\n",
+		},
+		{"JSON with charset", "application/json; charset=utf-8", body, http.StatusOK, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/auth/login", strings.NewReader(tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+
+			got := send(t, srv, req)
+
+			if got.status != tt.wantStatus || (tt.wantBody != "" && got.body != tt.wantBody) {
+				t.Errorf("login = %d %q, want %d %q", got.status, got.body, tt.wantStatus, tt.wantBody)
+			}
+			if tt.wantStatus != http.StatusOK && got.setCookie != "" {
+				t.Errorf("Set-Cookie = %q, want none", got.setCookie)
+			}
+		})
+	}
+	var rows int
+	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM sessions").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("sessions = %d, want 1 (from the JSON login only)", rows)
+	}
+}
+
+func TestLoginEndsSessionTheRequestCarried(t *testing.T) {
+	f := newAuthFixture(t)
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, f.sessions))
+	defer srv.Close()
+	old, _ := login(t, srv, "saud")
+
+	resp := call(t, srv, http.MethodPost, "/auth/login", old, "", `{"username":"amal","password":"`+password+`"}`)
+
+	if resp.status != http.StatusOK {
+		t.Fatalf("login = %d %s, want 200", resp.status, resp.body)
+	}
+	if got := call(t, srv, http.MethodGet, "/me", old, "", ""); got.status != http.StatusUnauthorized {
+		t.Errorf("GET /me with the old cookie = %d %q, want 401", got.status, got.body)
+	}
+	cookie, err := http.ParseSetCookie(resp.setCookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := call(t, srv, http.MethodGet, "/me", &http.Cookie{Name: cookie.Name, Value: cookie.Value}, "", "")
+	if got.status != http.StatusOK || !strings.Contains(got.body, `"username":"amal"`) {
+		t.Errorf("GET /me with the new cookie = %d %q, want 200 for amal", got.status, got.body)
+	}
+	var rows int
+	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM sessions").Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("sessions = %d, want 1", rows)
 	}
 }
 
@@ -327,6 +429,14 @@ func (securityServer) PostMessage(context.Context, paramtest.PostMessageRequestO
 	return paramtest.PostMessage204Response{}, nil
 }
 
+func (securityServer) GetUnlisted(context.Context, paramtest.GetUnlistedRequestObject) (paramtest.GetUnlistedResponseObject, error) {
+	return paramtest.GetUnlisted204Response{}, nil
+}
+
+func (securityServer) PostUnlisted(context.Context, paramtest.PostUnlistedRequestObject) (paramtest.PostUnlistedResponseObject, error) {
+	return paramtest.PostUnlisted204Response{}, nil
+}
+
 func TestRolesOnMarketDataAndChatRoutes(t *testing.T) {
 	f := newAuthFixture(t)
 	accounts := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, f.sessions))
@@ -352,6 +462,13 @@ func TestRolesOnMarketDataAndChatRoutes(t *testing.T) {
 		{"owner chats", http.MethodPost, "/messages", ownerCookie, ownerCSRF, http.StatusNoContent, ""},
 		{"member chats with owner's CSRF token", http.MethodPost, "/messages", memberCookie, ownerCSRF, http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
 		{"member chats without CSRF token", http.MethodPost, "/messages", memberCookie, "", http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
+		// Operations off the public list need a session whatever their security says.
+		{"anonymous calls an op with an empty requirement", http.MethodGet, "/unlisted", nil, "", http.StatusUnauthorized, `{"code":"unauthorized","message":"sign in to use /unlisted"}` + "\n"},
+		{"anonymous calls a CSRF-only op", http.MethodPost, "/unlisted", nil, "", http.StatusUnauthorized, `{"code":"unauthorized","message":"sign in to use /unlisted"}` + "\n"},
+		{"anonymous calls a CSRF-only op with a token", http.MethodPost, "/unlisted", nil, memberCSRF, http.StatusUnauthorized, `{"code":"unauthorized","message":"sign in to use /unlisted"}` + "\n"},
+		{"member calls an op with an empty requirement", http.MethodGet, "/unlisted", memberCookie, "", http.StatusNoContent, ""},
+		{"member calls a CSRF-only op", http.MethodPost, "/unlisted", memberCookie, memberCSRF, http.StatusNoContent, ""},
+		{"member calls a CSRF-only op without CSRF token", http.MethodPost, "/unlisted", memberCookie, "", http.StatusForbidden, `{"code":"forbidden","message":"missing or invalid X-CSRF-Token header"}` + "\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -359,6 +476,37 @@ func TestRolesOnMarketDataAndChatRoutes(t *testing.T) {
 
 			if got.status != tt.wantStatus || got.body != tt.wantBody {
 				t.Errorf("%s %s = %d %q, want %d %q", tt.method, tt.path, got.status, got.body, tt.wantStatus, tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestPublicRoutes(t *testing.T) {
+	tests := []struct {
+		name    string
+		ids     []string
+		want    map[string]bool
+		wantErr string
+	}{
+		{"listed operations", []string{"listBars", "placeOrder"}, map[string]bool{"GET /bars/{interval}": true, "POST /orders": true}, ""},
+		{"none", nil, map[string]bool{}, ""},
+		{"unknown operation", []string{"listBars", "nope"}, nil, `public operation "nope" is not in the spec`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := httpapi.PublicRoutes(paramtest.Spec, tt.ids)
+
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("PublicRoutes() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("PublicRoutes() error = %v", err)
+			}
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("PublicRoutes() = %v, want %v", got, tt.want)
 			}
 		})
 	}

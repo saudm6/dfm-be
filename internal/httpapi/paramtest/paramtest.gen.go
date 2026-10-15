@@ -86,6 +86,12 @@ type ServerInterface interface {
 
 	// (GET /quotes)
 	ListQuotes(w http.ResponseWriter, r *http.Request)
+
+	// (GET /unlisted)
+	GetUnlisted(w http.ResponseWriter, r *http.Request)
+
+	// (POST /unlisted)
+	PostUnlisted(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -109,6 +115,16 @@ func (_ Unimplemented) PlaceOrder(w http.ResponseWriter, r *http.Request) {
 
 // (GET /quotes)
 func (_ Unimplemented) ListQuotes(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /unlisted)
+func (_ Unimplemented) GetUnlisted(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /unlisted)
+func (_ Unimplemented) PostUnlisted(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -258,6 +274,40 @@ func (siw *ServerInterfaceWrapper) ListQuotes(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetUnlisted operation middleware
+func (siw *ServerInterfaceWrapper) GetUnlisted(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUnlisted(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUnlisted operation middleware
+func (siw *ServerInterfaceWrapper) PostUnlisted(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CsrfTokenScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUnlisted(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -382,6 +432,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/messages", wrapper.PostMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/unlisted", wrapper.GetUnlisted)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/unlisted", wrapper.PostUnlisted)
 	})
 
 	return r
@@ -532,6 +588,70 @@ func (response ListQuotesdefaultJSONResponse) VisitListQuotesResponse(w http.Res
 	return err
 }
 
+type GetUnlistedRequestObject struct {
+}
+
+type GetUnlistedResponseObject interface {
+	VisitGetUnlistedResponse(w http.ResponseWriter) error
+}
+
+type GetUnlisted204Response struct {
+}
+
+func (response GetUnlisted204Response) VisitGetUnlistedResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type GetUnlisteddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetUnlisteddefaultJSONResponse) VisitGetUnlistedResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUnlistedRequestObject struct {
+}
+
+type PostUnlistedResponseObject interface {
+	VisitPostUnlistedResponse(w http.ResponseWriter) error
+}
+
+type PostUnlisted204Response struct {
+}
+
+func (response PostUnlisted204Response) VisitPostUnlistedResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostUnlisteddefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response PostUnlisteddefaultJSONResponse) VisitPostUnlistedResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 
@@ -546,6 +666,12 @@ type StrictServerInterface interface {
 
 	// (GET /quotes)
 	ListQuotes(ctx context.Context, request ListQuotesRequestObject) (ListQuotesResponseObject, error)
+
+	// (GET /unlisted)
+	GetUnlisted(ctx context.Context, request GetUnlistedRequestObject) (GetUnlistedResponseObject, error)
+
+	// (POST /unlisted)
+	PostUnlisted(ctx context.Context, request PostUnlistedRequestObject) (PostUnlistedResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -686,6 +812,54 @@ func (sh *strictHandler) ListQuotes(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListQuotesResponseObject); ok {
 		if err := validResponse.VisitListQuotesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUnlisted operation middleware
+func (sh *strictHandler) GetUnlisted(w http.ResponseWriter, r *http.Request) {
+	var request GetUnlistedRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUnlisted(ctx, request.(GetUnlistedRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUnlisted")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUnlistedResponseObject); ok {
+		if err := validResponse.VisitGetUnlistedResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostUnlisted operation middleware
+func (sh *strictHandler) PostUnlisted(w http.ResponseWriter, r *http.Request) {
+	var request PostUnlistedRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostUnlisted(ctx, request.(PostUnlistedRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostUnlisted")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostUnlistedResponseObject); ok {
+		if err := validResponse.VisitPostUnlistedResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

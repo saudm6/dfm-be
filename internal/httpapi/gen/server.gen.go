@@ -148,7 +148,8 @@ type Decimal = decimal.Decimal
 type Error struct {
 	// Code Stable machine-readable reason in snake_case. Clients branch on
 	// this, never on message. Known codes: bad_request, unauthorized,
-	// forbidden, not_found, method_not_allowed, conflict, internal.
+	// forbidden, not_found, method_not_allowed, conflict,
+	// unsupported_media_type, internal.
 	//
 	//
 	// Examples: not_found
@@ -647,7 +648,8 @@ type LoginResponseObject interface {
 }
 
 type Login200ResponseHeaders struct {
-	SetCookie string
+	CacheControl string
+	SetCookie    string
 }
 
 type Login200JSONResponse struct {
@@ -662,6 +664,7 @@ func (response Login200JSONResponse) VisitLoginResponse(w http.ResponseWriter) e
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
 	w.Header().Set("Set-Cookie", fmt.Sprint(response.Headers.SetCookie))
 	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
@@ -678,6 +681,20 @@ func (response Login401JSONResponse) VisitLoginResponse(w http.ResponseWriter) e
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login415JSONResponse Error
+
+func (response Login415JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -796,15 +813,23 @@ type GetMeResponseObject interface {
 	VisitGetMeResponse(w http.ResponseWriter) error
 }
 
-type GetMe200JSONResponse Me
+type GetMe200ResponseHeaders struct {
+	CacheControl string
+}
+
+type GetMe200JSONResponse struct {
+	Body    Me
+	Headers GetMe200ResponseHeaders
+}
 
 func (response GetMe200JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
 	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err

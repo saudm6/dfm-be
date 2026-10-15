@@ -83,6 +83,10 @@ type Options struct {
 type Service struct {
 	q    *dbgen.Queries
 	opts Options
+	// dummyHash is verified against when a username is unknown, so an
+	// unknown user and a wrong password take the same time. It is made
+	// here so that the first failed login is not slower than the rest.
+	dummyHash string
 }
 
 // NewService returns a Service storing accounts and sessions in db.
@@ -90,7 +94,11 @@ func NewService(db dbgen.DBTX, opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Service{q: dbgen.New(db), opts: opts}
+	dummy, err := HashPassword(rand.Text())
+	if err != nil {
+		panic(err) // crypto/rand.Read does not return errors.
+	}
+	return &Service{q: dbgen.New(db), opts: opts, dummyHash: dummy}
 }
 
 // NormalizeUsername returns username trimmed and lower-cased, or an error
@@ -138,11 +146,13 @@ func (s *Service) CreateUser(ctx context.Context, username, password string, rol
 // Login checks username and password and starts a session. It returns the
 // session and the cookie that carries its token. An unknown username and a
 // wrong password both give ErrInvalidCredentials after the same work.
-func (s *Service) Login(ctx context.Context, username, password string) (Session, *http.Cookie, error) {
+// prior is the value of the session cookie the request already carried, or
+// empty; a successful login deletes the session it names.
+func (s *Service) Login(ctx context.Context, username, password, prior string) (Session, *http.Cookie, error) {
 	row, err := s.q.UserByUsername(ctx, strings.ToLower(strings.TrimSpace(username)))
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		_, _ = VerifyPassword(password, dummyHash())
+		_, _ = VerifyPassword(password, s.dummyHash)
 		return Session{}, nil, ErrInvalidCredentials
 	case err != nil:
 		return Session{}, nil, fmt.Errorf("auth: find user: %w", err)
@@ -171,6 +181,12 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	now := s.opts.Now()
 	if err := s.q.DeleteExpiredSessions(ctx, now); err != nil {
 		return Session{}, nil, fmt.Errorf("auth: delete expired sessions: %w", err)
+	}
+	if priorToken, err := base64.RawURLEncoding.DecodeString(prior); err == nil && len(priorToken) == tokenLen {
+		priorHash := hashToken(priorToken)
+		if err := s.q.DeleteSession(ctx, priorHash[:]); err != nil {
+			return Session{}, nil, fmt.Errorf("auth: delete prior session: %w", err)
+		}
 	}
 	hash := hashToken(token)
 	absolute := now.Add(s.opts.MaxAge)

@@ -211,7 +211,7 @@ func TestRunUserCreateSeedsAccountThatCanSignIn(t *testing.T) {
 	}
 	defer pool.Close()
 	sess, _, err := auth.NewService(pool, auth.Options{IdleTimeout: time.Hour, MaxAge: time.Hour}).
-		Login(t.Context(), "saud", "correct horse battery")
+		Login(t.Context(), "saud", "correct horse battery", "")
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}

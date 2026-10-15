@@ -104,7 +104,10 @@ func bodyDecodeError(w http.ResponseWriter, _ *http.Request, err error) {
 func bodyDecodeMessage(err error) string {
 	var syntaxErr *json.SyntaxError
 	var typeErr *json.UnmarshalTypeError
+	var sizeErr *http.MaxBytesError
 	switch {
+	case errors.As(err, &sizeErr):
+		return fmt.Sprintf("request body is larger than %d bytes", sizeErr.Limit)
 	case errors.Is(err, domain.ErrInvalid):
 		return "request body: " + detail(err)
 	case errors.As(err, &typeErr) && typeErr.Field != "":

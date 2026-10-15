@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -65,13 +64,3 @@ func VerifyPassword(password, hash string) (bool, error) {
 	got := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
-
-// dummyHash is verified against when a username is unknown, so an unknown
-// user and a wrong password take the same time.
-var dummyHash = sync.OnceValue(func() string {
-	h, err := HashPassword(rand.Text())
-	if err != nil {
-		panic(err)
-	}
-	return h
-})

@@ -121,7 +121,7 @@ func TestLoginRejectsBadCredentialsAlike(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, cookie, err := svc.Login(t.Context(), tt.username, tt.password)
+			_, cookie, err := svc.Login(t.Context(), tt.username, tt.password, "")
 			if !errors.Is(err, auth.ErrInvalidCredentials) || err.Error() != "auth: invalid username or password" {
 				t.Errorf("Login() error = %v, want %v", err, auth.ErrInvalidCredentials)
 			}
@@ -139,7 +139,7 @@ func TestLoginSessionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sess, cookie, err := svc.Login(t.Context(), " SAUD", "correct horse battery")
+	sess, cookie, err := svc.Login(t.Context(), " SAUD", "correct horse battery", "")
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -199,7 +199,7 @@ func TestInsecureCookieOption(t *testing.T) {
 	if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Owner); err != nil {
 		t.Fatal(err)
 	}
-	_, cookie, err := svc.Login(t.Context(), "saud", "correct horse battery")
+	_, cookie, err := svc.Login(t.Context(), "saud", "correct horse battery", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestSessionExpiry(t *testing.T) {
 			if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Member); err != nil {
 				t.Fatal(err)
 			}
-			_, cookie, err := svc.Login(t.Context(), "saud", "correct horse battery")
+			_, cookie, err := svc.Login(t.Context(), "saud", "correct horse battery", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,11 +282,11 @@ func TestLoginDeletesExpiredSessions(t *testing.T) {
 	if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Member); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.Login(t.Context(), "saud", "correct horse battery"); err != nil {
+	if _, _, err := svc.Login(t.Context(), "saud", "correct horse battery", ""); err != nil {
 		t.Fatal(err)
 	}
 	c.Advance(2 * time.Hour)
-	if _, _, err := svc.Login(t.Context(), "saud", "correct horse battery"); err != nil {
+	if _, _, err := svc.Login(t.Context(), "saud", "correct horse battery", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -299,12 +299,75 @@ func TestLoginDeletesExpiredSessions(t *testing.T) {
 	}
 }
 
+func TestLoginDeletesPriorSession(t *testing.T) {
+	tests := []struct {
+		name          string
+		password      string
+		wantErr       error
+		wantPriorLive bool
+	}{
+		{"successful login", "correct horse battery", nil, false},
+		{"failed login", "wrong password", auth.ErrInvalidCredentials, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := newService(t)
+			if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Owner); err != nil {
+				t.Fatal(err)
+			}
+			_, prior, err := svc.Login(t.Context(), "saud", "correct horse battery", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, err = svc.Login(t.Context(), "saud", tt.password, prior.Value)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Login() error = %v, want %v", err, tt.wantErr)
+			}
+			_, err = svc.UserFromRequest(requestWith(prior))
+			if live := err == nil; live != tt.wantPriorLive {
+				t.Errorf("prior session live = %t (error %v), want %t", live, err, tt.wantPriorLive)
+			}
+		})
+	}
+}
+
+func TestLoginIgnoresMalformedPriorCookie(t *testing.T) {
+	svc, _ := newService(t)
+	if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Owner); err != nil {
+		t.Fatal(err)
+	}
+	_, cookie, err := svc.Login(t.Context(), "saud", "correct horse battery", "garbage")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if _, err := svc.UserFromRequest(requestWith(cookie)); err != nil {
+		t.Errorf("UserFromRequest() error = %v, want the new session", err)
+	}
+}
+
+// The hash for unknown usernames exists before the first login, so the
+// first failed login takes no longer than later ones.
+func TestNewServiceMakesDummyHash(t *testing.T) {
+	svc := auth.NewService(nil, auth.Options{})
+
+	h := auth.DummyHash(svc)
+
+	if !strings.HasPrefix(h, "$argon2id$v=19$m=19456,t=2,p=1$") {
+		t.Errorf("dummy hash = %q, want an argon2id hash", h)
+	}
+	if ok, err := auth.VerifyPassword("", h); err != nil || ok {
+		t.Errorf("VerifyPassword(\"\", dummy hash) = %t, %v, want false, nil", ok, err)
+	}
+}
+
 func TestCheckCSRF(t *testing.T) {
 	svc, _ := newService(t)
 	if _, err := svc.CreateUser(t.Context(), "saud", "correct horse battery", auth.Member); err != nil {
 		t.Fatal(err)
 	}
-	sess, _, err := svc.Login(t.Context(), "saud", "correct horse battery")
+	sess, _, err := svc.Login(t.Context(), "saud", "correct horse battery", "")
 	if err != nil {
 		t.Fatal(err)
 	}

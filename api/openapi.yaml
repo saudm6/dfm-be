@@ -19,8 +19,11 @@ info:
       response with its own body, such as the 503 of /healthz.
 
     Authentication:
-    - Every operation needs a session unless it declares `security: []`
-      (/healthz, /openapi.yaml and POST /auth/login). POST /auth/login sets
+    - Every operation needs a session except the three that declare
+      `security: []`: /healthz, /openapi.yaml and POST /auth/login. The
+      server keeps that list itself (api.PublicOperations), so any other
+      operation needs a session whatever its security says. Each operation
+      declares at most one security requirement object. POST /auth/login sets
       the session cookie `dfm_session` (HttpOnly, SameSite=Strict, Path=/,
       Secure unless the server runs with DFM_COOKIE_SECURE=false). Browsers
       send it back on their own; clients never read it.
@@ -129,7 +132,11 @@ paths:
       description: |
         Checks the username and password and starts a session. The response
         sets the session cookie and carries the session's CSRF token. An
-        unknown username and a wrong password get the same 401.
+        unknown username and a wrong password get the same 401. The request
+        must be `Content-Type: application/json` (415 unsupported_media_type
+        otherwise) and at most 4096 bytes (400 bad_request otherwise). A
+        successful login ends the session named by the request's existing
+        `dfm_session` cookie, if any.
       tags: [foundation]
       security: []
       requestBody:
@@ -147,6 +154,8 @@ paths:
               required: true
               schema:
                 type: string
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -158,6 +167,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
               example: {code: unauthorized, message: invalid username or password}
+        "415":
+          description: The request body is not `application/json`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: unsupported_media_type, message: send the login request as application/json}
         default:
           $ref: "#/components/responses/Error"
 
@@ -190,6 +206,9 @@ paths:
       responses:
         "200":
           description: The signed-in account.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -271,6 +290,16 @@ components:
         The session's CSRF token from POST /auth/login or GET /me. Required
         on every POST, PUT, PATCH, and DELETE that needs a session.
 
+  headers:
+    NoStore:
+      description: |
+        `no-store`, on responses that carry the CSRF token, so no cache
+        keeps it.
+      required: true
+      schema:
+        type: string
+        const: no-store
+
   responses:
     Error:
       description: The request failed. The body says why.
@@ -294,7 +323,8 @@ components:
           description: |
             Stable machine-readable reason in snake_case. Clients branch on
             this, never on message. Known codes: bad_request, unauthorized,
-            forbidden, not_found, method_not_allowed, conflict, internal.
+            forbidden, not_found, method_not_allowed, conflict,
+            unsupported_media_type, internal.
           examples: [not_found]
         message:
           type: string

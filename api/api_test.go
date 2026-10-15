@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -131,63 +132,180 @@ func decimalParams(doc *openapi3.T) []string {
 	return found
 }
 
-// operationSecurity returns the security requirements of every operation,
-// keyed by "METHOD /path", with the document's requirements applied to
-// operations that declare none.
-func operationSecurity(doc *openapi3.T) map[string]openapi3.SecurityRequirements {
-	out := map[string]openapi3.SecurityRequirements{}
+type operation struct {
+	key      string // "METHOD /path"
+	id       string
+	security openapi3.SecurityRequirements
+}
+
+// operations returns every operation of doc sorted by key, with the
+// document's security requirements applied to operations that declare none.
+func operations(doc *openapi3.T) []operation {
+	var ops []operation
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
 			sec := doc.Security
 			if op.Security != nil {
 				sec = *op.Security
 			}
-			out[method+" "+path] = sec
+			ops = append(ops, operation{key: method + " " + path, id: op.OperationID, security: sec})
 		}
 	}
-	return out
+	slices.SortFunc(ops, func(a, b operation) int { return strings.Compare(a.key, b.key) })
+	return ops
 }
 
-// The auth middleware lets through every operation without security
-// requirements, so making one public must be a deliberate change here.
-func TestSpecPublicOperations(t *testing.T) {
-	var public []string
-	for op, sec := range operationSecurity(loadSpec(t)) {
-		if len(sec) == 0 {
-			public = append(public, op)
+// publicOperationProblems checks doc against public, the IDs of the
+// operations the auth middleware serves without a session. A listed
+// operation must exist and declare `security: []`; every other operation
+// must require sessionCookie in each of its security requirements.
+func publicOperationProblems(doc *openapi3.T, public []string) []string {
+	var problems []string
+	seen := map[string]bool{}
+	for _, op := range operations(doc) {
+		if slices.Contains(public, op.id) {
+			seen[op.id] = true
+			if len(op.security) != 0 {
+				problems = append(problems, fmt.Sprintf("%s (%s) is public but has security %v, want []", op.key, op.id, op.security))
+			}
+			continue
+		}
+		if len(op.security) == 0 {
+			problems = append(problems, fmt.Sprintf("%s (%s) has no security requirement but is not public", op.key, op.id))
+		}
+		for _, req := range op.security {
+			if _, ok := req["sessionCookie"]; !ok {
+				problems = append(problems, fmt.Sprintf("%s (%s) has security requirement %v without sessionCookie but is not public", op.key, op.id, req))
+			}
 		}
 	}
-	slices.Sort(public)
-	if want := []string{"GET /healthz", "GET /openapi.yaml", "POST /auth/login"}; !slices.Equal(public, want) {
-		t.Errorf("operations without security = %q, want %q", public, want)
+	for _, id := range public {
+		if !seen[id] {
+			problems = append(problems, fmt.Sprintf("public operation %s is not in the spec", id))
+		}
+	}
+	return problems
+}
+
+// The auth middleware serves exactly api.PublicOperations without a session;
+// the spec must say the same to the generated client.
+func TestSpecPublicOperations(t *testing.T) {
+	if want := []string{"getHealth", "getOpenAPISpec", "login"}; !slices.Equal(api.PublicOperations, want) {
+		t.Errorf("api.PublicOperations = %q, want %q", api.PublicOperations, want)
+	}
+	for _, p := range publicOperationProblems(loadSpec(t), api.PublicOperations) {
+		t.Error(p)
+	}
+}
+
+func TestPublicOperationProblems(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromData([]byte(`
+openapi: 3.1.0
+info: {title: t, version: "0"}
+security:
+  - sessionCookie: []
+paths:
+  /login:
+    post: {operationId: login, security: [], responses: {"204": {description: ok}}}
+  /me:
+    get: {operationId: getMe, responses: {"204": {description: ok}}}
+    post: {operationId: postMe, security: [{sessionCookie: [], csrfToken: []}], responses: {"204": {description: ok}}}
+  /scratch:
+    get: {operationId: getScratch, security: [{}], responses: {"204": {description: ok}}}
+    post: {operationId: postScratch, security: [{csrfToken: []}], responses: {"204": {description: ok}}}
+    put: {operationId: putScratch, security: [], responses: {"204": {description: ok}}}
+components:
+  securitySchemes:
+    sessionCookie: {type: apiKey, in: cookie, name: dfm_session}
+    csrfToken: {type: apiKey, in: header, name: X-CSRF-Token}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := publicOperationProblems(doc, []string{"login", "getMe", "gone"})
+
+	want := []string{
+		"GET /me (getMe) is public but has security [map[sessionCookie:[]]], want []",
+		"GET /scratch (getScratch) has security requirement map[] without sessionCookie but is not public",
+		"POST /scratch (postScratch) has security requirement map[csrfToken:[]] without sessionCookie but is not public",
+		"PUT /scratch (putScratch) has no security requirement but is not public",
+		"public operation gone is not in the spec",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("publicOperationProblems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
 // The middleware checks the CSRF token on every unsafe method; the spec must
 // say so for the generated client.
 func TestSpecUnsafeOperationsNeedCSRFToken(t *testing.T) {
-	for op, sec := range operationSecurity(loadSpec(t)) {
-		method, _, _ := strings.Cut(op, " ")
-		if len(sec) == 0 || method == "GET" || method == "HEAD" || method == "OPTIONS" {
+	for _, op := range operations(loadSpec(t)) {
+		method, _, _ := strings.Cut(op.key, " ")
+		if len(op.security) == 0 || method == "GET" || method == "HEAD" || method == "OPTIONS" {
 			continue
 		}
-		for _, req := range sec {
+		for _, req := range op.security {
 			if _, ok := req["csrfToken"]; !ok {
-				t.Errorf("%s: security requirement %v lacks csrfToken", op, req)
+				t.Errorf("%s: security requirement %v lacks csrfToken", op.key, req)
 			}
 		}
 	}
 }
 
-// The middleware answers 500 for a sessionCookie scope it does not know.
-func TestSpecSessionScopesAreKnown(t *testing.T) {
-	for op, sec := range operationSecurity(loadSpec(t)) {
-		for _, req := range sec {
+// sessionScopeProblems reports operations with more than one security
+// requirement object, because the generated code keeps only the last
+// requirement's sessionCookie scopes, and sessionCookie scopes the
+// middleware does not know, because it answers those with 500.
+func sessionScopeProblems(doc *openapi3.T) []string {
+	var problems []string
+	for _, op := range operations(doc) {
+		if len(op.security) > 1 {
+			problems = append(problems, fmt.Sprintf("%s has %d security requirement objects, want at most 1", op.key, len(op.security)))
+		}
+		for _, req := range op.security {
 			for _, scope := range req["sessionCookie"] {
 				if scope != "marketData" {
-					t.Errorf("%s: unknown sessionCookie scope %q", op, scope)
+					problems = append(problems, fmt.Sprintf("%s: unknown sessionCookie scope %q", op.key, scope))
 				}
 			}
 		}
+	}
+	return problems
+}
+
+func TestSpecSessionScopesAreKnown(t *testing.T) {
+	for _, p := range sessionScopeProblems(loadSpec(t)) {
+		t.Error(p)
+	}
+}
+
+func TestSessionScopeProblems(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromData([]byte(`
+openapi: 3.1.0
+info: {title: t, version: "0"}
+paths:
+  /quotes:
+    get: {operationId: listQuotes, security: [{sessionCookie: [marketData]}], responses: {"204": {description: ok}}}
+  /either:
+    get: {operationId: getEither, security: [{sessionCookie: [marketData]}, {sessionCookie: []}], responses: {"204": {description: ok}}}
+  /admin:
+    get: {operationId: getAdmin, security: [{sessionCookie: [admin]}], responses: {"204": {description: ok}}}
+components:
+  securitySchemes:
+    sessionCookie: {type: apiKey, in: cookie, name: dfm_session}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := sessionScopeProblems(doc)
+
+	want := []string{
+		`GET /admin: unknown sessionCookie scope "admin"`,
+		"GET /either has 2 security requirement objects, want at most 1",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("sessionScopeProblems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

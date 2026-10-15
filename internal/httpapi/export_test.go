@@ -14,6 +14,11 @@ var NewRouterWithServer = newRouter
 // ParseDecimalParam lets fake servers parse decimal parameters as handlers do.
 var ParseDecimalParam = parseDecimalParam
 
+var paramTestPublicRoutes = mustPublicRoutes(paramtest.Spec, paramtest.PublicOperations)
+
+// PublicRoutes lets tests check how public operation IDs resolve to routes.
+var PublicRoutes = publicRoutes
+
 // NewParamTestRouter serves the test-only contract in paramtest with ssi,
 // set up exactly as newRouter sets up api/openapi.yaml.
 func NewParamTestRouter(logger *slog.Logger, ssi paramtest.StrictServerInterface, sessions *auth.Service) http.Handler {
@@ -24,7 +29,7 @@ func NewParamTestRouter(logger *slog.Logger, ssi paramtest.StrictServerInterface
 	})
 	paramtest.HandlerWithOptions(h, paramtest.ChiServerOptions{
 		BaseRouter:       r,
-		Middlewares:      []paramtest.MiddlewareFunc{requireAuth(logger, sessions, paramtest.SessionCookieScopes)},
+		Middlewares:      []paramtest.MiddlewareFunc{requireAuth(logger, sessions, paramtest.SessionCookieScopes, paramTestPublicRoutes)},
 		ErrorHandlerFunc: paramBindError,
 	})
 	return r

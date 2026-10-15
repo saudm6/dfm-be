@@ -89,6 +89,33 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /unlisted:
+    get:
+      operationId: getUnlisted
+      description: |
+        An empty security requirement, which OpenAPI reads as "no auth
+        needed". The operation is not on the router's public list, so it
+        still needs a session.
+      security:
+        - {}
+      responses:
+        "204":
+          description: Allowed.
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: postUnlisted
+      description: |
+        A CSRF token without a session cookie. The operation is not on the
+        router's public list, so it still needs a session.
+      security:
+        - csrfToken: []
+      responses:
+        "204":
+          description: Allowed.
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   securitySchemes:
     sessionCookie:

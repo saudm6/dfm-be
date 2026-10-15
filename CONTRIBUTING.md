@@ -56,13 +56,21 @@ parameter.
 
 ### Authentication and roles
 
-Every operation needs a signed-in session by default: the spec's top-level
-`security` applies the `sessionCookie` scheme. The auth middleware reads each
-operation's requirements from the request context, where the generated code
-puts them, so the spec decides what is protected:
+Every operation needs a signed-in session. The auth middleware fails closed:
+it serves an operation without a session only if its ID is in
+`api.PublicOperations` (today `getHealth`, `getOpenAPISpec`, `login`), and
+requires a session for every other operation whatever its `security` says.
+The spec's top-level `security` applies the `sessionCookie` scheme so the
+generated client sends the cookie.
 
-- `security: []` makes an operation public. `api.TestSpecPublicOperations`
-  lists the public operations, so adding one is a deliberate change.
+- To make an operation public, add its ID to `api.PublicOperations` and
+  declare `security: []` on it. `api.TestSpecPublicOperations` fails if a
+  listed operation declares any security, or if an unlisted operation has a
+  security requirement without `sessionCookie` (such as `[{}]` or
+  `[{csrfToken: []}]`).
+- Declare at most one security requirement object per operation
+  (`api.TestSpecSessionScopesAreKnown`): the generated code keeps only the
+  last object's `sessionCookie` scopes.
 - A POST, PUT, PATCH, or DELETE declares
   `security: [{sessionCookie: [], csrfToken: []}]`. The middleware checks the
   `X-CSRF-Token` header on those methods whatever the spec says;
@@ -70,6 +78,10 @@ puts them, so the spec decides what is protected:
 - Market-data and trading operations (quotes, history, orders, positions)
   add the `marketData` scope: `sessionCookie: [marketData]`. Only the
   `owner` role has it; a `member` gets 403. Chat and layouts use no scope.
+  The middleware reads the scopes from the request context, where the
+  generated code puts them.
+- Responses that carry the CSRF token (POST /auth/login, GET /me) declare
+  the `NoStore` header and send `Cache-Control: no-store`.
 
 Handlers read the signed-in user with `auth.SessionFromContext(ctx)`. Code
 outside the generated routes, such as the `/ws` upgrade, calls

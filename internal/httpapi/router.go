@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/saudm6/dfm-be/api"
 	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
@@ -20,8 +21,8 @@ import (
 // NewRouter returns the handler for every HTTP route of the service.
 // Each request gets a request ID and is logged to logger when it completes.
 // db is the service database; /healthz reports whether it answers.
-// sessions signs users in and out; every operation of api/openapi.yaml that
-// does not declare `security: []` needs one of its sessions.
+// sessions signs users in and out; every operation of api/openapi.yaml except
+// those in api.PublicOperations needs one of its sessions.
 func NewRouter(logger *slog.Logger, db Pinger, sessions *auth.Service) http.Handler {
 	return newRouter(logger, server{logger: logger, db: db, sessions: sessions}, sessions)
 }
@@ -33,13 +34,16 @@ func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface, sessions *aut
 		RequestErrorHandlerFunc:  bodyDecodeError,
 		ResponseErrorHandlerFunc: handlerError(logger),
 	})
-	gen.HandlerWithOptions(h, gen.ChiServerOptions{
+	gen.HandlerWithOptions(loginGuard{h}, gen.ChiServerOptions{
 		BaseRouter:       r,
-		Middlewares:      []gen.MiddlewareFunc{requireAuth(logger, sessions, gen.SessionCookieScopes)},
+		Middlewares:      []gen.MiddlewareFunc{requireAuth(logger, sessions, gen.SessionCookieScopes, apiPublicRoutes)},
 		ErrorHandlerFunc: paramBindError,
 	})
 	return r
 }
+
+// apiPublicRoutes are the routes of api.PublicOperations.
+var apiPublicRoutes = mustPublicRoutes(api.OpenAPI, api.PublicOperations)
 
 // newBaseRouter returns a router with the middleware and the JSON 404 and 405
 // answers, ready for the generated routes.
