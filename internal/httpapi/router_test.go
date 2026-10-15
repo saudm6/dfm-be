@@ -16,6 +16,11 @@ import (
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
 
+// fakeDB is a Pinger that returns err.
+type fakeDB struct{ err error }
+
+func (f fakeDB) Ping(context.Context) error { return f.err }
+
 func TestRouter(t *testing.T) {
 	spec, err := os.ReadFile("../../api/openapi.yaml")
 	if err != nil {
@@ -23,6 +28,7 @@ func TestRouter(t *testing.T) {
 	}
 	tests := []struct {
 		name            string
+		db              fakeDB
 		method          string
 		path            string
 		wantStatus      int
@@ -36,7 +42,16 @@ func TestRouter(t *testing.T) {
 			path:            "/healthz",
 			wantStatus:      http.StatusOK,
 			wantContentType: "application/json",
-			wantBody:        "{\"status\":\"ok\"}\n",
+			wantBody:        "{\"status\":\"ok\",\"db\":\"ok\"}\n",
+		},
+		{
+			name:            "health check database down",
+			db:              fakeDB{err: errors.New("connection refused")},
+			method:          http.MethodGet,
+			path:            "/healthz",
+			wantStatus:      http.StatusServiceUnavailable,
+			wantContentType: "application/json",
+			wantBody:        "{\"status\":\"unavailable\",\"db\":\"unavailable\"}\n",
 		},
 		{
 			name:            "health check wrong method",
@@ -66,7 +81,7 @@ func TestRouter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := httpapi.NewRouter(slog.New(slog.DiscardHandler))
+			router := httpapi.NewRouter(slog.New(slog.DiscardHandler), tt.db)
 			rec := httptest.NewRecorder()
 
 			router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, nil))
@@ -92,7 +107,7 @@ func TestRouterServesSpecWithLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler)))
+	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}))
 	defer srv.Close()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/openapi.yaml", nil)
 	if err != nil {
@@ -154,7 +169,7 @@ func TestRouterHandlerErrorSendsErrorBody(t *testing.T) {
 
 func TestRouterLogsEachRequest(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)))
+	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{})
 
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz?probe=1", nil))
 
@@ -182,14 +197,34 @@ func TestRouterLogsEachRequest(t *testing.T) {
 	if line.Method != http.MethodGet || line.Path != "/healthz" {
 		t.Errorf("method, path = %q, %q, want %q, %q", line.Method, line.Path, http.MethodGet, "/healthz")
 	}
-	if line.Status != 200 || line.Bytes != 16 {
-		t.Errorf("status, bytes = %d, %d, want %d, %d", line.Status, line.Bytes, 200, 16)
+	if line.Status != 200 || line.Bytes != 26 {
+		t.Errorf("status, bytes = %d, %d, want %d, %d", line.Status, line.Bytes, 200, 26)
 	}
 	if line.Duration == nil {
 		t.Error("duration missing from log line")
 	}
 	if line.RequestID == "" {
 		t.Error("request_id missing from log line")
+	}
+}
+
+func TestHealthzLogsDatabaseError(t *testing.T) {
+	var logs bytes.Buffer
+	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{err: errors.New("connection refused")})
+
+	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
+
+	var line struct {
+		Level string `json:"level"`
+		Msg   string `json:"msg"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(&logs).Decode(&line); err != nil {
+		t.Fatalf("decode log line: %v", err)
+	}
+	want := "ERROR|health check: database ping failed|connection refused"
+	if got := line.Level + "|" + line.Msg + "|" + line.Error; got != want {
+		t.Errorf("first log line = %q, want %q", got, want)
 	}
 }
 

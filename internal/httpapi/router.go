@@ -17,8 +17,9 @@ import (
 
 // NewRouter returns the handler for every HTTP route of the service.
 // Each request gets a request ID and is logged to logger when it completes.
-func NewRouter(logger *slog.Logger) http.Handler {
-	return newRouter(logger, server{})
+// db is the service database; /healthz reports whether it answers.
+func NewRouter(logger *slog.Logger, db Pinger) http.Handler {
+	return newRouter(logger, server{logger: logger, db: db})
 }
 
 // newRouter serves the operations of api/openapi.yaml with ssi.

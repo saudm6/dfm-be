@@ -10,9 +10,13 @@ info:
 
     Conventions:
     - JSON field names are lowerCamelCase.
-    - Prices and money values are decimal strings ("11.40"), never JSON numbers.
+    - Prices and money values are decimal strings, never JSON numbers. The
+      server writes them without trailing zeros: "11.4", "0", "56500000.5".
     - Times are RFC 3339 with an offset. Dates are YYYY-MM-DD.
-    - Every non-2xx response carries the Error body.
+    - Every non-2xx response carries the Error body, including unknown paths
+      (404 not_found), wrong methods (405 method_not_allowed), and server
+      faults (500 internal). The only exception is a declared non-2xx
+      response with its own body, such as the 503 of /healthz.
 
     Layout: one tagged section per feature in `paths` and in
     `components.schemas`, F00 to F13 then H. Add a feature's paths and schemas
@@ -61,15 +65,23 @@ paths:
   /healthz:
     get:
       operationId: getHealth
-      summary: Report that the service is up
+      summary: Report whether the service and its database are up
       tags: [foundation]
       responses:
         "200":
-          description: The service is up.
+          description: The service is up and the database answers.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+              example: {status: ok, db: ok}
+        "503":
+          description: The database did not answer a ping within 2 seconds.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+              example: {status: unavailable, db: unavailable}
         default:
           $ref: "#/components/responses/Error"
 
@@ -168,7 +180,7 @@ components:
           description: |
             Stable machine-readable reason in snake_case. Clients branch on
             this, never on message. Known codes: bad_request, unauthorized,
-            forbidden, not_found, conflict, internal.
+            forbidden, not_found, method_not_allowed, conflict, internal.
           examples: [not_found]
         message:
           type: string
@@ -189,9 +201,13 @@ components:
 
     Decimal:
       type: string
-      description: An exact decimal number written as a string.
+      description: |
+        An exact decimal number written as a string. The server writes it
+        without trailing zeros ("11.4", not "11.40"). Use it for body fields
+        only: a decimal query or path parameter is a plain string schema that
+        the handler parses (see CONTRIBUTING.md).
       pattern: "^-?[0-9]+(\\.[0-9]+)?$"
-      examples: ["11.40"]
+      examples: ["11.4"]
       x-go-type: decimal.Decimal
       x-go-type-import:
         path: github.com/shopspring/decimal
@@ -404,12 +420,21 @@ components:
 
     Health:
       type: object
-      required: [status]
+      required: [status, db]
       properties:
         status:
           type: string
-          enum: [ok]
-          x-enum-varnames: [HealthStatusOK]
+          description: ok when every dependency is ok, otherwise unavailable.
+          enum: [ok, unavailable]
+          x-order: 1
+          x-enum-varnames: [HealthStatusOK, HealthStatusUnavailable]
+        db:
+          type: string
+          description: Whether the database answered a ping.
+          enum: [ok, unavailable]
+          x-go-name: DB
+          x-order: 2
+          x-enum-varnames: [HealthDBOK, HealthDBUnavailable]
 
     # ==========================================================================
     # security-master (F01)

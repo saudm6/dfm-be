@@ -18,8 +18,12 @@ import (
 )
 
 // server implements every operation in api/openapi.yaml. Each feature puts
-// its handler methods in its own file in this package.
-type server struct{}
+// its handler methods in its own file in this package, and adds the
+// dependencies it needs as fields here.
+type server struct {
+	logger *slog.Logger
+	db     Pinger
+}
 
 var _ gen.StrictServerInterface = server{}
 

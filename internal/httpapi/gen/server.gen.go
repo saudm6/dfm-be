@@ -20,13 +20,34 @@ import (
 
 // Defines values for HealthStatus.
 const (
-	HealthStatusOK HealthStatus = "ok"
+	HealthStatusOK          HealthStatus = "ok"
+	HealthStatusUnavailable HealthStatus = "unavailable"
 )
 
 // Valid indicates whether the value is a known member of the HealthStatus enum.
 func (e HealthStatus) Valid() bool {
 	switch e {
 	case HealthStatusOK:
+		return true
+	case HealthStatusUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HealthDb.
+const (
+	HealthDBOK          HealthDb = "ok"
+	HealthDBUnavailable HealthDb = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the HealthDb enum.
+func (e HealthDb) Valid() bool {
+	switch e {
+	case HealthDBOK:
+		return true
+	case HealthDBUnavailable:
 		return true
 	default:
 		return false
@@ -37,31 +58,47 @@ func (e HealthStatus) Valid() bool {
 // a 1m bar starts on a minute boundary. All prices are positive, or all
 // are "0" with volume and value 0 on a day with no trades.
 type Bar struct {
-	// Close An exact decimal number written as a string.
+	// Close An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Close Decimal `json:"close"`
 
 	// Freshness How current a value is: realtime from a live feed, delayed from a
 	// delayed feed, or eod from an end-of-day source.
 	Freshness Freshness `json:"freshness"`
 
-	// High An exact decimal number written as a string.
+	// High An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	High Decimal `json:"high"`
 
 	// Interval Bar length, one minute or one trading day.
 	Interval Interval `json:"interval"`
 
-	// Low An exact decimal number written as a string.
+	// Low An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Low Decimal `json:"low"`
 
-	// Open An exact decimal number written as a string.
+	// Open An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Open Decimal `json:"open"`
 
 	// Source The feed a value came from.
@@ -79,9 +116,13 @@ type Bar struct {
 	// Examples: EMAAR
 	Symbol Symbol `json:"symbol"`
 
-	// Value An exact decimal number written as a string.
+	// Value An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Value  Decimal `json:"value"`
 	Volume int64   `json:"volume"`
 }
@@ -89,16 +130,19 @@ type Bar struct {
 // Currency defines model for Currency.
 type Currency = domain.Currency
 
-// Decimal An exact decimal number written as a string.
+// Decimal An exact decimal number written as a string. The server writes it
+// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+// only: a decimal query or path parameter is a plain string schema that
+// the handler parses (see CONTRIBUTING.md).
 //
-// Examples: 11.40
+// Examples: 11.4
 type Decimal = decimal.Decimal
 
 // Error The body of every non-2xx response.
 type Error struct {
 	// Code Stable machine-readable reason in snake_case. Clients branch on
 	// this, never on message. Known codes: bad_request, unauthorized,
-	// forbidden, not_found, conflict, internal.
+	// forbidden, not_found, method_not_allowed, conflict, internal.
 	//
 	//
 	// Examples: not_found
@@ -119,11 +163,18 @@ type Freshness = domain.Freshness
 
 // Health defines model for Health.
 type Health struct {
+	// Status ok when every dependency is ok, otherwise unavailable.
 	Status HealthStatus `json:"status"`
+
+	// DB Whether the database answered a ping.
+	DB HealthDb `json:"db"`
 }
 
-// HealthStatus defines model for Health.Status.
+// HealthStatus ok when every dependency is ok, otherwise unavailable.
 type HealthStatus string
+
+// HealthDb Whether the database answered a ping.
+type HealthDb string
 
 // Instrument A listed security.
 type Instrument struct {
@@ -179,15 +230,23 @@ type Quote struct {
 	// AsOf When the source produced this snapshot.
 	AsOf time.Time `json:"asOf"`
 
-	// Ask An exact decimal number written as a string.
+	// Ask An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Ask     Decimal `json:"ask"`
 	AskSize int64   `json:"askSize"`
 
-	// Bid An exact decimal number written as a string.
+	// Bid An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Bid     Decimal `json:"bid"`
 	BidSize int64   `json:"bidSize"`
 
@@ -195,17 +254,25 @@ type Quote struct {
 	// delayed feed, or eod from an end-of-day source.
 	Freshness Freshness `json:"freshness"`
 
-	// Last An exact decimal number written as a string.
+	// Last An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Last Decimal `json:"last"`
 
 	// LastTradeAt Time of the last trade, omitted before the first trade.
 	LastTradeAt *time.Time `json:"lastTradeAt,omitempty"`
 
-	// PrevClose An exact decimal number written as a string.
+	// PrevClose An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	PrevClose Decimal `json:"prevClose"`
 
 	// Source The feed a value came from.
@@ -223,9 +290,13 @@ type Quote struct {
 	// Trades Number of trades today.
 	Trades int64 `json:"trades"`
 
-	// Value An exact decimal number written as a string.
+	// Value An exact decimal number written as a string. The server writes it
+	// without trailing zeros ("11.4", not "11.40"). Use it for body fields
+	// only: a decimal query or path parameter is a plain string schema that
+	// the handler parses (see CONTRIBUTING.md).
 	//
-	// Examples: 11.40
+	//
+	// Examples: 11.4
 	Value Decimal `json:"value"`
 
 	// Volume Shares traded today.
@@ -245,7 +316,7 @@ type Symbol = string
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// GetHealth Report that the service is up
+	// GetHealth Report whether the service and its database are up
 	// (GET /healthz)
 	GetHealth(w http.ResponseWriter, r *http.Request)
 	// GetOpenAPISpec Download this contract
@@ -257,7 +328,7 @@ type ServerInterface interface {
 
 type Unimplemented struct{}
 
-// GetHealth Report that the service is up
+// GetHealth Report whether the service and its database are up
 // (GET /healthz)
 func (_ Unimplemented) GetHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -452,6 +523,20 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	return err
 }
 
+type GetHealth503JSONResponse Health
+
+func (response GetHealth503JSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetHealthdefaultJSONResponse struct {
 	Body       Error
 	StatusCode int
@@ -515,7 +600,7 @@ func (response GetOpenAPISpecdefaultJSONResponse) VisitGetOpenAPISpecResponse(w 
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// GetHealth Report that the service is up
+	// GetHealth Report whether the service and its database are up
 	// (GET /healthz)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
 	// GetOpenAPISpec Download this contract
