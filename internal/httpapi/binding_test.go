@@ -8,8 +8,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oapi-codegen/runtime"
+
+	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi"
 	"github.com/saudm6/dfm-be/internal/httpapi/paramtest"
+)
+
+// The generated code validates a query parameter only through Bind, so every
+// domain enum in api/openapi.yaml must implement runtime.Binder.
+var (
+	_ runtime.Binder = (*domain.Exchange)(nil)
+	_ runtime.Binder = (*domain.Currency)(nil)
+	_ runtime.Binder = (*domain.Freshness)(nil)
+	_ runtime.Binder = (*domain.Source)(nil)
+	_ runtime.Binder = (*domain.Interval)(nil)
+	_ runtime.Binder = (*domain.InstrumentClass)(nil)
+	_ runtime.Binder = (*domain.InstrumentStatus)(nil)
 )
 
 // bindingServer echoes what the generated code bound. Operations it does not

@@ -79,3 +79,51 @@ func parser[T any](parse func(string) (T, error)) func(string) error {
 		return err
 	}
 }
+
+// The generated code binds a decimal.Decimal parameter as an exploded object,
+// so it reads nothing and reports no error. Decimal parameters must be plain
+// strings that the handler parses.
+func TestSpecHasNoDecimalParameters(t *testing.T) {
+	if got := decimalParams(loadSpec(t)); len(got) != 0 {
+		t.Errorf("parameters using the Decimal schema: %q, want none", got)
+	}
+}
+
+func TestDecimalParamsFindsDecimalParameter(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromData([]byte(`
+openapi: 3.1.0
+info: {title: t, version: "0"}
+paths:
+  /quotes:
+    get:
+      parameters:
+        - {name: minPrice, in: query, schema: {$ref: "#/components/schemas/Decimal"}}
+        - {name: maxPrice, in: query, schema: {type: string}}
+      responses:
+        "200": {description: ok}
+components:
+  schemas:
+    Decimal: {type: string, x-go-type: decimal.Decimal}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decimalParams(doc), []string{"GET /quotes minPrice"}; !slices.Equal(got, want) {
+		t.Errorf("decimalParams = %q, want %q", got, want)
+	}
+}
+
+func decimalParams(doc *openapi3.T) []string {
+	var found []string
+	for path, item := range doc.Paths.Map() {
+		for method, op := range item.Operations() {
+			for _, p := range append(slices.Clone(item.Parameters), op.Parameters...) {
+				if s := p.Value.Schema; s != nil && s.Value != nil && s.Value.Extensions["x-go-type"] == "decimal.Decimal" {
+					found = append(found, method+" "+path+" "+p.Value.Name)
+				}
+			}
+		}
+	}
+	slices.Sort(found)
+	return found
+}
