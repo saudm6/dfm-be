@@ -21,7 +21,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/saudm6/dfm-be/internal/store/dbgen"
 )
@@ -125,7 +124,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password string, rol
 		Username:     u,
 		PasswordHash: hash,
 		Role:         string(role),
-		CreatedAt:    timestamptz(s.opts.Now()),
+		CreatedAt:    s.opts.Now(),
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == "23505" {
 		return User{}, fmt.Errorf("%w: %s", ErrUserExists, u)
@@ -170,7 +169,7 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	}
 	csrf := base64.RawURLEncoding.EncodeToString(csrfBytes)
 	now := s.opts.Now()
-	if err := s.q.DeleteExpiredSessions(ctx, timestamptz(now)); err != nil {
+	if err := s.q.DeleteExpiredSessions(ctx, now); err != nil {
 		return Session{}, nil, fmt.Errorf("auth: delete expired sessions: %w", err)
 	}
 	hash := hashToken(token)
@@ -179,9 +178,9 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 		TokenHash:         hash[:],
 		UserID:            row.ID,
 		CsrfToken:         csrf,
-		CreatedAt:         timestamptz(now),
-		IdleExpiresAt:     timestamptz(minTime(now.Add(s.opts.IdleTimeout), absolute)),
-		AbsoluteExpiresAt: timestamptz(absolute),
+		CreatedAt:         now,
+		IdleExpiresAt:     minTime(now.Add(s.opts.IdleTimeout), absolute),
+		AbsoluteExpiresAt: absolute,
 	}); err != nil {
 		return Session{}, nil, fmt.Errorf("auth: insert session: %w", err)
 	}
@@ -217,9 +216,9 @@ func (s *Service) UserFromRequest(r *http.Request) (Session, error) {
 	hash := hashToken(token)
 	now := s.opts.Now()
 	row, err := s.q.TouchSession(r.Context(), dbgen.TouchSessionParams{
-		IdleExpiresAt: timestamptz(now.Add(s.opts.IdleTimeout)),
+		IdleExpiresAt: now.Add(s.opts.IdleTimeout),
 		TokenHash:     hash[:],
-		Now:           timestamptz(now),
+		Now:           now,
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -296,8 +295,6 @@ func randomToken() ([]byte, error) {
 }
 
 func hashToken(token []byte) [sha256.Size]byte { return sha256.Sum256(token) }
-
-func timestamptz(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }
 
 func minTime(a, b time.Time) time.Time {
 	if a.Before(b) {

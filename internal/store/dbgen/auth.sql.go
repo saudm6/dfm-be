@@ -7,15 +7,14 @@ package dbgen
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 )
 
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE idle_expires_at <= $1
 `
 
-func (q *Queries) DeleteExpiredSessions(ctx context.Context, idleExpiresAt pgtype.Timestamptz) error {
+func (q *Queries) DeleteExpiredSessions(ctx context.Context, idleExpiresAt time.Time) error {
 	_, err := q.db.Exec(ctx, deleteExpiredSessions, idleExpiresAt)
 	return err
 }
@@ -38,9 +37,9 @@ type InsertSessionParams struct {
 	TokenHash         []byte
 	UserID            int64
 	CsrfToken         string
-	CreatedAt         pgtype.Timestamptz
-	IdleExpiresAt     pgtype.Timestamptz
-	AbsoluteExpiresAt pgtype.Timestamptz
+	CreatedAt         time.Time
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -65,7 +64,7 @@ type InsertUserParams struct {
 	Username     string
 	PasswordHash string
 	Role         string
-	CreatedAt    pgtype.Timestamptz
+	CreatedAt    time.Time
 }
 
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (int64, error) {
@@ -91,9 +90,9 @@ RETURNING users.id, users.username, users.role, sessions.csrf_token
 `
 
 type TouchSessionParams struct {
-	IdleExpiresAt pgtype.Timestamptz
+	IdleExpiresAt time.Time
 	TokenHash     []byte
-	Now           pgtype.Timestamptz
+	Now           time.Time
 }
 
 type TouchSessionRow struct {

@@ -5,16 +5,46 @@
 package dbgen
 
 import (
+	"time"
+
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/saudm6/dfm-be/internal/domain"
+	"github.com/shopspring/decimal"
 )
+
+type Order struct {
+	ClientOrderID     uuid.UUID
+	Symbol            domain.Symbol
+	Side              domain.Side
+	Quantity          decimal.Decimal
+	LimitPrice        decimal.NullDecimal
+	CreatedQuantity   decimal.Decimal
+	CreatedLimitPrice decimal.NullDecimal
+	State             domain.OrderState
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type OrderEvent struct {
+	ID            int64
+	ClientOrderID uuid.UUID
+	Source        string
+	Action        string
+	FromState     pgtype.Text
+	ToState       pgtype.Text
+	Detail        []byte
+	RawMessage    pgtype.Text
+	RecordedAt    time.Time
+}
 
 type Session struct {
 	TokenHash         []byte
 	UserID            int64
 	CsrfToken         string
-	CreatedAt         pgtype.Timestamptz
-	IdleExpiresAt     pgtype.Timestamptz
-	AbsoluteExpiresAt pgtype.Timestamptz
+	CreatedAt         time.Time
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
 }
 
 type User struct {
@@ -22,5 +52,5 @@ type User struct {
 	Username     string
 	PasswordHash string
 	Role         string
-	CreatedAt    pgtype.Timestamptz
+	CreatedAt    time.Time
 }

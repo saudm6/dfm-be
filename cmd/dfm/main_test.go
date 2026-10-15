@@ -89,7 +89,7 @@ func TestRunMigrateIsIdempotent(t *testing.T) {
 		name        string
 		wantApplied []int64
 	}{
-		{name: "empty database", wantApplied: []int64{20261015120000, 20261015140000}},
+		{name: "empty database", wantApplied: storetest.MigrationVersions(t)},
 		{name: "second run", wantApplied: []int64{}},
 	}
 	for _, tt := range tests {
@@ -165,8 +165,8 @@ func listenAddr(t *testing.T, logs io.Reader) string {
 		}
 		switch line.Msg {
 		case "database migrated":
-			if !slices.Equal(line.Applied, []int64{20261015120000, 20261015140000}) {
-				t.Errorf("startup applied %v, want [20261015120000 20261015140000]", line.Applied)
+			if want := storetest.MigrationVersions(t); !slices.Equal(line.Applied, want) {
+				t.Errorf("startup applied %v, want %v", line.Applied, want)
 			}
 			migrated = true
 		case "http server listening":
