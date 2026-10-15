@@ -31,11 +31,13 @@ type DisclosurePublishedEvent struct {
 	PublishedAt time.Time
 }
 
-// OrderChangedEvent announces a change in an order's state.
+// OrderChangedEvent announces a change in an order's state. It is a
+// notification only: the order_events table is the record of truth, so read
+// fills and history from there, not from these events.
 type OrderChangedEvent struct {
 	OrderID string
 	Symbol  domain.Symbol
-	Status  string
+	State   domain.OrderState
 	At      time.Time
 }
 

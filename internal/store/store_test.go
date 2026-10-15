@@ -30,7 +30,7 @@ func TestMigrateAppliesEveryMigrationOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Migrate() error = %v", err)
 	}
-	if want := []int64{20261015120000}; !slices.Equal(first, want) {
+	if want := []int64{20261015120000, 20261015125553}; !slices.Equal(first, want) {
 		t.Errorf("first Migrate() applied %v, want %v", first, want)
 	}
 
