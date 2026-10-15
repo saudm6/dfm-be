@@ -49,7 +49,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 - [x] **3.** [dfm-be#3](https://github.com/saudm6/dfm-be/issues/3) Define the core market domain types. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
 - [x] **4.** [dfm-be#4](https://github.com/saudm6/dfm-be/issues/4) Publish the OpenAPI contract and generate the server. Wave 3. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **5.** [dfm-be#5](https://github.com/saudm6/dfm-be/issues/5) Add local accounts, sessions, and roles. Wave 4. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 4 ([dfm-be#4](https://github.com/saudm6/dfm-be/issues/4)).
-- [ ] **6.** [dfm-be#6](https://github.com/saudm6/dfm-be/issues/6) Add the in-process event bus. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
+- [x] **6.** [dfm-be#6](https://github.com/saudm6/dfm-be/issues/6) Add the in-process event bus. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **7.** [dfm-be#7](https://github.com/saudm6/dfm-be/issues/7) Add the WebSocket gateway and topic protocol. Wave 5. Waits on step 5 ([dfm-be#5](https://github.com/saudm6/dfm-be/issues/5)), step 6 ([dfm-be#6](https://github.com/saudm6/dfm-be/issues/6)).
 - [ ] **8.** [dfm-be#8](https://github.com/saudm6/dfm-be/issues/8) Add the DFM trading calendar. Wave 3. Waits on step 2 ([dfm-be#2](https://github.com/saudm6/dfm-be/issues/2)), step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **9.** [dfm-be#9](https://github.com/saudm6/dfm-be/issues/9) Report source health and data freshness. Wave 6. Waits on step 6 ([dfm-be#6](https://github.com/saudm6/dfm-be/issues/6)), step 7 ([dfm-be#7](https://github.com/saudm6/dfm-be/issues/7)).
@@ -102,7 +102,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 ### F07 Technical studies
 
-- [ ] **44.** [dfm-be#30](https://github.com/saudm6/dfm-be/issues/30) Build the technical studies package. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
+- [x] **44.** [dfm-be#30](https://github.com/saudm6/dfm-be/issues/30) Build the technical studies package. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **45.** [dfm-be#31](https://github.com/saudm6/dfm-be/issues/31) Serve technical studies over bars. Wave 7. Waits on step 42 ([dfm-be#29](https://github.com/saudm6/dfm-be/issues/29)), step 44 ([dfm-be#30](https://github.com/saudm6/dfm-be/issues/30)).
 - [ ] **46.** [dfm-be#40](https://github.com/saudm6/dfm-be/issues/40) Store per-user layouts and chart templates. Part of F06. Wave 5. Waits on step 5 ([dfm-be#5](https://github.com/saudm6/dfm-be/issues/5)).
 - **47.** [dfm-fe#18](https://github.com/saudm6/dfm-fe/issues/18) Add study overlays and panes to the chart. Wave 10. Waits on step 43 ([dfm-fe#17](https://github.com/saudm6/dfm-fe/issues/17)), step 45 ([dfm-be#31](https://github.com/saudm6/dfm-be/issues/31)), step 46 ([dfm-be#40](https://github.com/saudm6/dfm-be/issues/40)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).
@@ -149,7 +149,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 ### F08 Correlation and pair spreads
 
-- [ ] **73.** [dfm-be#32](https://github.com/saudm6/dfm-be/issues/32) Build the returns and pairs analytics package. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
+- [x] **73.** [dfm-be#32](https://github.com/saudm6/dfm-be/issues/32) Build the returns and pairs analytics package. Wave 3. Waits on step 3 ([dfm-be#3](https://github.com/saudm6/dfm-be/issues/3)).
 - [ ] **74.** [dfm-be#33](https://github.com/saudm6/dfm-be/issues/33) Serve correlation, regression, and spread endpoints. Wave 8. Waits on step 40 ([dfm-be#27](https://github.com/saudm6/dfm-be/issues/27)), step 42 ([dfm-be#29](https://github.com/saudm6/dfm-be/issues/29)), step 73 ([dfm-be#32](https://github.com/saudm6/dfm-be/issues/32)).
 - **75.** [dfm-fe#19](https://github.com/saudm6/dfm-fe/issues/19) Build the correlation matrix (CORR). Wave 9. Waits on step 18 ([dfm-fe#7](https://github.com/saudm6/dfm-fe/issues/7)), step 74 ([dfm-be#33](https://github.com/saudm6/dfm-be/issues/33)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).
 - **76.** [dfm-fe#20](https://github.com/saudm6/dfm-fe/issues/20) Build the regression and hedge ratio view (HRA). Wave 9. Waits on step 18 ([dfm-fe#7](https://github.com/saudm6/dfm-fe/issues/7)), step 74 ([dfm-be#33](https://github.com/saudm6/dfm-be/issues/33)). Tracked in [dfm-fe](https://github.com/saudm6/dfm-fe/blob/main/ROADMAP.md).
