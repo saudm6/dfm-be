@@ -53,6 +53,10 @@ const (
 // clock is the time source of every command; tests replace it.
 var clock = time.Now
 
+// newDFMClient returns the client of DFM's web API at baseURL; tests wrap it
+// to keep every test off the live API.
+var newDFMClient = func(baseURL string) *dfm.Client { return &dfm.Client{BaseURL: baseURL} }
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, os.Args[1:], os.Environ(), os.Stdin, os.Stdout)
@@ -198,7 +202,7 @@ func syncInstruments(ctx context.Context, environ []string, stdout io.Writer) er
 		return err
 	}
 	defer pool.Close()
-	if err := instrumentSync(pool, &dfm.Client{BaseURL: cfg.DFM.APIBaseURL})(ctx, logger); err != nil {
+	if err := instrumentSync(pool, newDFMClient(cfg.DFM.APIBaseURL))(ctx, logger); err != nil {
 		logger.ErrorContext(ctx, "instrument sync failed", "error", err)
 		return err
 	}
@@ -215,7 +219,8 @@ func instrumentSync(pool *pgxpool.Pool, src instruments.Source) func(context.Con
 		}
 		logger.InfoContext(ctx, "instrument sync finished",
 			"instruments", res.Instruments, "written", res.Written, "delisted", res.Delisted,
-			"boards", res.Boards, "boards_written", res.BoardsWritten, "skipped", res.Skipped)
+			"boards", res.Boards, "boards_written", res.BoardsWritten, "boards_missing", res.BoardsMissing,
+			"skipped", res.Skipped)
 		return nil
 	}
 }
@@ -271,7 +276,7 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	}
 	jobs := []job{
 		instruments.Job{
-			Sync:     instrumentSync(pool, &dfm.Client{BaseURL: cfg.DFM.APIBaseURL}),
+			Sync:     instrumentSync(pool, newDFMClient(cfg.DFM.APIBaseURL)),
 			Calendar: cals,
 			Lead:     time.Duration(hours.Open-hours.PreOpen)*time.Minute + instrumentSyncBeforePreOpen,
 			Logger:   logger,

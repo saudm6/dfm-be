@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/saudm6/dfm-be/internal/dfm"
 	"github.com/saudm6/dfm-be/internal/domain"
@@ -44,6 +45,9 @@ type Result struct {
 	Boards int
 	// BoardsWritten is the number of board codes inserted or changed.
 	BoardsWritten int
+	// BoardsMissing is the number of stored board codes the market watch
+	// no longer shows, now set to 0 lines and marked missing.
+	BoardsMissing int
 	// Skipped is the number of source lines left out.
 	Skipped int
 }
@@ -51,8 +55,9 @@ type Result struct {
 // Sync fetches the security master from src as of now and upserts it by
 // symbol in one transaction. Rows that did not change are not written, so a
 // sync with no upstream change writes nothing. Instruments are never
-// deleted: one DFM stops listing is marked delisted. Skipped lines are
-// logged at WARN.
+// deleted: one DFM stops listing is marked delisted. Board line counts are
+// recomputed each sync; a board the market watch no longer shows gets 0 lines
+// and a missing-since time of now. Skipped lines are logged at WARN.
 func Sync(ctx context.Context, db DB, src Source, now time.Time, logger *slog.Logger) (Result, error) {
 	m, err := src.SecurityMaster(ctx, now)
 	if err != nil {
@@ -90,6 +95,18 @@ func Sync(ctx context.Context, db DB, src Source, now time.Time, logger *slog.Lo
 			}
 			res.BoardsWritten += int(n)
 		}
+		codes := make([]string, len(m.Boards))
+		for i, b := range m.Boards {
+			codes[i] = b.Code
+		}
+		n, err = q.MarkMissingBoards(ctx, dbgen.MarkMissingBoardsParams{
+			MissingSince: pgtype.Timestamptz{Time: now, Valid: true},
+			Present:      codes,
+		})
+		if err != nil {
+			return fmt.Errorf("mark missing boards: %w", err)
+		}
+		res.BoardsMissing = int(n)
 		return nil
 	})
 	if err != nil {
@@ -152,19 +169,32 @@ func Get(ctx context.Context, db dbgen.DBTX, sym domain.Symbol) (domain.Instrume
 	return in, nil
 }
 
-// Boards returns the board-code registry, ordered by code.
-func Boards(ctx context.Context, db dbgen.DBTX) ([]dfm.Board, error) {
+// Board is a stored board code.
+type Board struct {
+	dfm.Board
+	// MissingSince is when a sync first found the board absent from the
+	// market watch; Lines is then 0 and Exchanges and Classes are as last
+	// seen. It is zero while the board is in the market watch.
+	MissingSince time.Time
+}
+
+// Boards returns the board-code registry, ordered by code. MissingSince is
+// in UTC.
+func Boards(ctx context.Context, db dbgen.DBTX) ([]Board, error) {
 	rows, err := dbgen.New(db).ListBoards(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("instruments: list boards: %w", err)
 	}
-	out := make([]dfm.Board, len(rows))
+	out := make([]Board, len(rows))
 	for i, r := range rows {
-		out[i] = dfm.Board{
+		out[i].Board = dfm.Board{
 			Code:      r.Code,
 			Exchanges: make([]domain.Exchange, 0, len(r.Exchanges)),
 			Classes:   make([]domain.InstrumentClass, 0, len(r.Classes)),
 			Lines:     int(r.Lines),
+		}
+		if r.MissingSince.Valid {
+			out[i].MissingSince = r.MissingSince.Time.UTC()
 		}
 		for _, e := range r.Exchanges {
 			out[i].Exchanges = append(out[i].Exchanges, domain.Exchange(e))

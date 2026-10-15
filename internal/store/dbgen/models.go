@@ -14,11 +14,12 @@ import (
 )
 
 type Board struct {
-	Code      string
-	Exchanges []string
-	Classes   []string
-	Lines     int32
-	UpdatedAt time.Time
+	Code         string
+	Exchanges    []string
+	Classes      []string
+	Lines        int32
+	MissingSince pgtype.Timestamptz
+	UpdatedAt    time.Time
 }
 
 type Holiday struct {

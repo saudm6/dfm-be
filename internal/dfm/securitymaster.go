@@ -3,6 +3,7 @@ package dfm
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -63,9 +64,10 @@ var groupOrder = []string{"Equities", "Bonds", "Sukuks", "Funds", "ETFs", "REITs
 // sector indices in the sectors list (docs/dfm-history-endpoint.md).
 var indexSectorIDs = []string{"9999", "11", "22", "33", "44", "55", "66", "77", "88"}
 
-// currencySuffix finds the currency code DFM ends bond and sukuk trading
-// codes with, as in DPWDU0926EUR or EIBUH331USD2.
-var currencySuffix = regexp.MustCompile(`[0-9]([A-Z]{3})[0-9]?$`)
+// currencySuffix finds the currency code DFM ends trading codes with, as in
+// DPWDU0926EUR, EIBUH331USD2, INDO21235USD, or the perpetual SIBPRPUSD. The
+// first group holds the digit before the code, if any.
+var currencySuffix = regexp.MustCompile(`([0-9]?)([A-Z]{3})[0-9]?$`)
 
 // usdRate is the market-watch "rate" of lines quoted in USD.
 var usdRate = decimal.RequireFromString("3.67")
@@ -122,6 +124,10 @@ func (c *Client) SecurityMaster(ctx context.Context, now time.Time) (SecurityMas
 	var stocks []stock
 	if err := c.getJSON(ctx, "/mw/v1/stocks", nil, &stocks); err != nil {
 		return SecurityMaster{}, err
+	}
+	// An empty market watch would mark every line delisted.
+	if len(stocks) == 0 {
+		return SecurityMaster{}, errors.New("dfm: market watch has no lines")
 	}
 	sectorsEN, err := c.sectors(ctx, "en")
 	if err != nil {
@@ -236,11 +242,10 @@ func (c *Client) overview(ctx context.Context, sym domain.Symbol) (overview, err
 	if every == 0 {
 		every = DefaultOverviewInterval
 	}
-	if err := c.overviews.wait(ctx, every); err != nil {
-		return overview{}, err
-	}
 	const path = "/cdn2/web/v1/get_security_overview"
-	status, body, err := c.get(ctx, path, url.Values{"symbol": {string(sym)}})
+	status, body, err := c.get(ctx, path, url.Values{"symbol": {string(sym)}}, func(ctx context.Context) error {
+		return c.overviews.wait(ctx, every)
+	})
 	switch {
 	case err != nil:
 		return overview{}, err
@@ -285,7 +290,7 @@ func (j joiner) instrument(sym domain.Symbol, class domain.InstrumentClass, l li
 	if err != nil {
 		return domain.Instrument{}, err
 	}
-	currency, err := currencyOf(sym, st, inMarketWatch)
+	currency, err := currencyOf(sym, class, st, inMarketWatch)
 	if err != nil {
 		return domain.Instrument{}, err
 	}
@@ -335,16 +340,24 @@ func (j joiner) status(name string, st stock, inMarketWatch bool, ov overview) d
 	return domain.StatusListed
 }
 
-// currencyOf reads the currency from the code's suffix, which bond and sukuk
-// lines carry, else from the market-watch rate, 3.67 on USD lines. Other
-// lines trade in AED.
-func currencyOf(sym domain.Symbol, st stock, inMarketWatch bool) (domain.Currency, error) {
-	if m := currencySuffix.FindStringSubmatch(string(sym)); m != nil {
-		c, err := domain.ParseCurrency(m[1])
-		if err != nil {
-			return "", fmt.Errorf("currency suffix %q is not a known currency", m[1])
+// currencyOf reads the currency from the code's suffix, else from the
+// market-watch rate, 3.67 on USD lines; other lines trade in AED. Bond and
+// sukuk codes end in a currency code, after a digit (DPWDU0926EUR) or not
+// (SIBPRPUSD, whose rate is 1). Fund, ETF, and REIT codes count only a code
+// after a digit (INDO21235USD). Equity codes are never read: their letters
+// are a name. AED is never read from a suffix, so a code ending in AED gets
+// the rate's currency.
+func currencyOf(sym domain.Symbol, class domain.InstrumentClass, st stock, inMarketWatch bool) (domain.Currency, error) {
+	if m := currencySuffix.FindStringSubmatch(string(sym)); m != nil && class != domain.ClassEquity {
+		afterDigit := m[1] != ""
+		debt := class == domain.ClassBond || class == domain.ClassSukuk
+		c, err := domain.ParseCurrency(m[2])
+		switch {
+		case err != nil && afterDigit:
+			return "", fmt.Errorf("currency suffix %q is not a known currency", m[2])
+		case err == nil && c != domain.CurrencyAED && (afterDigit || debt):
+			return c, nil
 		}
-		return c, nil
 	}
 	if inMarketWatch && st.Rate.Valid && st.Rate.Decimal.Equal(usdRate) {
 		return domain.CurrencyUSD, nil

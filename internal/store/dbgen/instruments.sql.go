@@ -51,7 +51,7 @@ func (q *Queries) GetInstrument(ctx context.Context, symbol domain.Symbol) (Inst
 }
 
 const listBoards = `-- name: ListBoards :many
-SELECT code, exchanges, classes, lines, updated_at FROM boards ORDER BY code
+SELECT code, exchanges, classes, lines, missing_since, updated_at FROM boards ORDER BY code
 `
 
 func (q *Queries) ListBoards(ctx context.Context) ([]Board, error) {
@@ -68,6 +68,7 @@ func (q *Queries) ListBoards(ctx context.Context) ([]Board, error) {
 			&i.Exchanges,
 			&i.Classes,
 			&i.Lines,
+			&i.MissingSince,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -80,12 +81,32 @@ func (q *Queries) ListBoards(ctx context.Context) ([]Board, error) {
 	return items, nil
 }
 
+const markMissingBoards = `-- name: MarkMissingBoards :execrows
+UPDATE boards SET lines = 0, missing_since = $1, updated_at = now()
+WHERE missing_since IS NULL AND NOT (code = ANY($2::text[]))
+`
+
+type MarkMissingBoardsParams struct {
+	MissingSince pgtype.Timestamptz
+	Present      []string
+}
+
+func (q *Queries) MarkMissingBoards(ctx context.Context, arg MarkMissingBoardsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markMissingBoards, arg.MissingSince, arg.Present)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertBoard = `-- name: UpsertBoard :execrows
 INSERT INTO boards (code, exchanges, classes, lines)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (code) DO UPDATE SET
-    exchanges = EXCLUDED.exchanges, classes = EXCLUDED.classes, lines = EXCLUDED.lines, updated_at = now()
-WHERE (boards.exchanges, boards.classes, boards.lines) IS DISTINCT FROM (EXCLUDED.exchanges, EXCLUDED.classes, EXCLUDED.lines)
+    exchanges = EXCLUDED.exchanges, classes = EXCLUDED.classes, lines = EXCLUDED.lines,
+    missing_since = NULL, updated_at = now()
+WHERE (boards.exchanges, boards.classes, boards.lines, boards.missing_since)
+    IS DISTINCT FROM (EXCLUDED.exchanges, EXCLUDED.classes, EXCLUDED.lines, NULL::timestamptz)
 `
 
 type UpsertBoardParams struct {

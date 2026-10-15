@@ -61,12 +61,14 @@ func (e *statusError) Error() string {
 }
 
 // get sends GET path?query and returns the status and body of the response.
-func (c *Client) get(ctx context.Context, path string, query url.Values) (int, []byte, error) {
+// pace, when not nil, runs before every attempt, so that retries keep to the
+// same rate as first attempts.
+func (c *Client) get(ctx context.Context, path string, query url.Values, pace func(context.Context) error) (int, []byte, error) {
 	u := c.url(path)
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	return c.send(ctx, func() (*http.Request, error) {
+	return c.send(ctx, pace, func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	})
 }
@@ -75,7 +77,7 @@ func (c *Client) get(ctx context.Context, path string, query url.Values) (int, [
 func (c *Client) postForm(ctx context.Context, path string, form url.Values) (int, []byte, error) {
 	u := c.url(path)
 	body := form.Encode()
-	return c.send(ctx, func() (*http.Request, error) {
+	return c.send(ctx, nil, func() (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(body))
 		if err == nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -86,7 +88,7 @@ func (c *Client) postForm(ctx context.Context, path string, form url.Values) (in
 
 // getJSON decodes the body of a 200 response to GET path?query into dst.
 func (c *Client) getJSON(ctx context.Context, path string, query url.Values, dst any) error {
-	status, body, err := c.get(ctx, path, query)
+	status, body, err := c.get(ctx, path, query, nil)
 	if err != nil {
 		return err
 	}
@@ -112,8 +114,9 @@ func (c *Client) url(path string) string {
 }
 
 // send performs the request newReq builds, retrying transport errors and 5xx
-// responses. Other statuses are returned to the caller.
-func (c *Client) send(ctx context.Context, newReq func() (*http.Request, error)) (int, []byte, error) {
+// responses. Other statuses are returned to the caller. pace, when not nil,
+// runs before every attempt.
+func (c *Client) send(ctx context.Context, pace func(context.Context) error, newReq func() (*http.Request, error)) (int, []byte, error) {
 	hc := c.HTTP
 	if hc == nil {
 		hc = defaultHTTP
@@ -126,6 +129,11 @@ func (c *Client) send(ctx context.Context, newReq func() (*http.Request, error))
 	for attempt := range attempts {
 		if attempt > 0 {
 			if err := sleep(ctx, delay); err != nil {
+				return 0, nil, err
+			}
+		}
+		if pace != nil {
+			if err := pace(ctx); err != nil {
 				return 0, nil, err
 			}
 		}

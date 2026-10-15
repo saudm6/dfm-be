@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -41,7 +42,7 @@ func TestSyncStoresTheSecurityMaster(t *testing.T) {
 		t.Fatalf("Sync() error = %v", err)
 	}
 
-	want := instruments.Result{Instruments: 31, Written: 31, Boards: 8, BoardsWritten: 8, Skipped: 1}
+	want := instruments.Result{Instruments: 33, Written: 33, Boards: 8, BoardsWritten: 8, Skipped: 1}
 	if got != want {
 		t.Errorf("Sync() = %+v, want %+v", got, want)
 	}
@@ -81,15 +82,15 @@ func TestSyncStoresTheSecurityMaster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Boards() error = %v", err)
 	}
-	wantBoards := []dfm.Board{
-		{Code: "200", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"equity", "fund"}, Lines: 3},
-		{Code: "202", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"bond", "sukuk"}, Lines: 6},
-		{Code: "203", Exchanges: []domain.Exchange{}, Classes: []domain.InstrumentClass{}, Lines: 1},
-		{Code: "210", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"equity"}, Lines: 1},
-		{Code: "510", Exchanges: []domain.Exchange{"DFM"}, Classes: []domain.InstrumentClass{"equity", "reit"}, Lines: 3},
-		{Code: "520", Exchanges: []domain.Exchange{"DFM"}, Classes: []domain.InstrumentClass{"equity"}, Lines: 1},
-		{Code: "602", Exchanges: []domain.Exchange{}, Classes: []domain.InstrumentClass{"future"}, Lines: 1},
-		{Code: "605", Exchanges: []domain.Exchange{}, Classes: []domain.InstrumentClass{"future"}, Lines: 1},
+	wantBoards := []instruments.Board{
+		{Board: dfm.Board{Code: "200", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"equity", "fund"}, Lines: 3}},
+		{Board: dfm.Board{Code: "202", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"bond", "sukuk"}, Lines: 8}},
+		{Board: dfm.Board{Code: "203", Exchanges: []domain.Exchange{}, Classes: []domain.InstrumentClass{}, Lines: 1}},
+		{Board: dfm.Board{Code: "210", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"equity"}, Lines: 1}},
+		{Board: dfm.Board{Code: "510", Exchanges: []domain.Exchange{"DFM"}, Classes: []domain.InstrumentClass{"equity", "reit"}, Lines: 3}},
+		{Board: dfm.Board{Code: "520", Exchanges: []domain.Exchange{"DFM"}, Classes: []domain.InstrumentClass{"equity"}, Lines: 1}},
+		{Board: dfm.Board{Code: "602", Exchanges: []domain.Exchange{}, Classes: []domain.InstrumentClass{"future"}, Lines: 1}},
+		{Board: dfm.Board{Code: "605", Exchanges: []domain.Exchange{}, Classes: []domain.InstrumentClass{"future"}, Lines: 1}},
 	}
 	if !reflect.DeepEqual(boards, wantBoards) {
 		t.Errorf("Boards() =\n%+v\nwant\n%+v", boards, wantBoards)
@@ -109,7 +110,7 @@ func TestSecondSyncWithoutUpstreamChangeWritesNothing(t *testing.T) {
 		t.Fatalf("second Sync() error = %v", err)
 	}
 
-	if want := (instruments.Result{Instruments: 31, Boards: 8, Skipped: 1}); got != want {
+	if want := (instruments.Result{Instruments: 33, Boards: 8, Skipped: 1}); got != want {
 		t.Errorf("second Sync() = %+v, want %+v", got, want)
 	}
 	if after := rowVersions(t, pool); after != before {
@@ -136,7 +137,7 @@ func TestSyncAppliesUpstreamChanges(t *testing.T) {
 		t.Fatalf("Sync() error = %v", err)
 	}
 
-	if want := (instruments.Result{Instruments: 29, Written: 1, Delisted: 1, Boards: 8, Skipped: 1}); got != want {
+	if want := (instruments.Result{Instruments: 31, Written: 1, Delisted: 1, Boards: 8, Skipped: 1}); got != want {
 		t.Errorf("Sync() = %+v, want %+v", got, want)
 	}
 	for sym, want := range map[domain.Symbol]domain.InstrumentStatus{
@@ -152,6 +153,98 @@ func TestSyncAppliesUpstreamChanges(t *testing.T) {
 		if in.Status != want {
 			t.Errorf("%s status = %q, want %q", sym, in.Status, want)
 		}
+	}
+}
+
+func TestSyncRecountsBoardsAndMarksMissingOnes(t *testing.T) {
+	pool := storetest.NewPool(t)
+	srv := dfmtest.NewServer(t, dfmtest.SecurityMasterDir())
+	if _, err := instruments.Sync(t.Context(), pool, newClient(srv), recordedAt, discard); err != nil {
+		t.Fatalf("first Sync() error = %v", err)
+	}
+	// Board 203 and the futures board 605 drop out of the market watch, and
+	// board 202 loses SIBPRPUSD.
+	srv.Replace("mw-stocks.json", withoutStocks(t, "UAESUKUK0728", "OMOILF27", "SIBPRPUSD"))
+	later := recordedAt.Add(24 * time.Hour)
+
+	for _, sync := range []struct {
+		at   time.Time
+		want instruments.Result
+	}{
+		{later, instruments.Result{Instruments: 33, Written: 1, Boards: 6, BoardsWritten: 1, BoardsMissing: 2, Skipped: 1}},
+		{later.Add(time.Hour), instruments.Result{Instruments: 33, Boards: 6, Skipped: 1}},
+	} {
+		got, err := instruments.Sync(t.Context(), pool, newClient(srv), sync.at, discard)
+		if err != nil {
+			t.Fatalf("Sync() at %s error = %v", sync.at, err)
+		}
+		if got != sync.want {
+			t.Errorf("Sync() at %s = %+v, want %+v", sync.at, got, sync.want)
+		}
+	}
+
+	boards, err := instruments.Boards(t.Context(), pool)
+	if err != nil {
+		t.Fatalf("Boards() error = %v", err)
+	}
+	got := make(map[string]string, len(boards))
+	for _, b := range boards {
+		got[b.Code] = fmt.Sprintf("%d %v %s", b.Lines, b.Classes, b.MissingSince.Format(time.RFC3339))
+	}
+	want := map[string]string{
+		"200": "3 [equity fund] 0001-01-01T00:00:00Z",
+		"202": "7 [bond sukuk] 0001-01-01T00:00:00Z",
+		"203": "0 [] 2026-10-16T08:00:00Z",
+		"210": "1 [equity] 0001-01-01T00:00:00Z",
+		"510": "3 [equity reit] 0001-01-01T00:00:00Z",
+		"520": "1 [equity] 0001-01-01T00:00:00Z",
+		"602": "1 [future] 0001-01-01T00:00:00Z",
+		"605": "0 [future] 2026-10-16T08:00:00Z",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Boards() =\n%v\nwant\n%v", got, want)
+	}
+
+	// Board 605 comes back.
+	srv.Replace("mw-stocks.json", withoutStocks(t, "UAESUKUK0728", "SIBPRPUSD"))
+	if _, err := instruments.Sync(t.Context(), pool, newClient(srv), later.Add(2*time.Hour), discard); err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	boards, err = instruments.Boards(t.Context(), pool)
+	if err != nil {
+		t.Fatalf("Boards() error = %v", err)
+	}
+	for _, b := range boards {
+		if b.Code == "605" && (b.Lines != 1 || !b.MissingSince.IsZero()) {
+			t.Errorf("board 605 back in the market watch = %d lines, missing since %s; want 1 line, not missing", b.Lines, b.MissingSince)
+		}
+	}
+}
+
+func TestSyncRejectsAnEmptyMarketWatch(t *testing.T) {
+	pool := storetest.NewPool(t)
+	srv := dfmtest.NewServer(t, dfmtest.SecurityMasterDir())
+	if _, err := instruments.Sync(t.Context(), pool, newClient(srv), recordedAt, discard); err != nil {
+		t.Fatalf("first Sync() error = %v", err)
+	}
+	before := rowVersions(t, pool)
+	empty := filepath.Join(t.TempDir(), "mw-stocks.json")
+	if err := os.WriteFile(empty, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv.Replace("mw-stocks.json", empty)
+
+	_, err := instruments.Sync(t.Context(), pool, newClient(srv), recordedAt, discard)
+
+	if want := "instruments: fetch security master: dfm: market watch has no lines"; err == nil || err.Error() != want {
+		t.Errorf("Sync() error = %v, want %q", err, want)
+	}
+	if after := rowVersions(t, pool); after != before {
+		t.Errorf("rows changed after a failed sync:\nbefore %s\nafter  %s", before, after)
+	}
+	in, err := instruments.Get(t.Context(), pool, "EMAAR")
+	if err != nil || in.Status != domain.StatusListed {
+		t.Errorf("Get(EMAAR) = %q, %v; want listed", in.Status, err)
 	}
 }
 
@@ -257,6 +350,32 @@ func withoutLines(t *testing.T, symbols ...string) string {
 			lists[group] = kept
 		}
 		out, err := json.Marshal(lists)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	})
+}
+
+// withoutStocks returns the market watch without the lines of symbols.
+func withoutStocks(t *testing.T, symbols ...string) string {
+	t.Helper()
+	return editFixture(t, "mw-stocks.json", func(s string) string {
+		var stocks []json.RawMessage
+		if err := json.Unmarshal([]byte(s), &stocks); err != nil {
+			t.Fatal(err)
+		}
+		kept := stocks[:0]
+		for _, l := range stocks {
+			var v struct{ ID string }
+			if err := json.Unmarshal(l, &v); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Contains(symbols, v.ID) {
+				kept = append(kept, l)
+			}
+		}
+		out, err := json.Marshal(kept)
 		if err != nil {
 			t.Fatal(err)
 		}

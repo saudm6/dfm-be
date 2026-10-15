@@ -265,7 +265,7 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	dbURL := storetest.NewURL(t)
-	environ := []string{"DFM_HTTP_ADDR=127.0.0.1:0", "DFM_DATABASE_URL=" + dbURL}
+	environ := []string{"DFM_HTTP_ADDR=127.0.0.1:0", "DFM_DATABASE_URL=" + dbURL, "DFM_API_BASE_URL=" + unreachableDFM}
 	logs, logw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {

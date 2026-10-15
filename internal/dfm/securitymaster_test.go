@@ -1,11 +1,13 @@
 package dfm_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +67,9 @@ var wantInstruments = []domain.Instrument{
 	{Symbol: "EBIUH1129USD", Exchange: domain.ExchangeNasdaqDubai,
 		NameEN: "EBIUH1129USD",
 		Class:  domain.ClassBond, Currency: "USD", Sector: "Debt Instrument", Board: "202", Status: domain.StatusListed},
+	{Symbol: "EXFBJPRPUSD", Exchange: domain.ExchangeNasdaqDubai,
+		NameEN: "Capital Bank of Jordan 7.000% PRP", NameAR: "Capital Bank of Jordan 7.000% PRP",
+		Class: domain.ClassBond, Currency: "USD", Board: "202", Status: domain.StatusListed},
 	{Symbol: "AMLAKSK2010", Exchange: domain.ExchangeDFM,
 		NameEN: "AMLAK SUKUK  (Matured)", NameAR: "صكوك املاك (تم استحقاقة)",
 		Class: domain.ClassSukuk, Currency: "AED", Sector: "Debt Instrument", Status: domain.StatusMatured},
@@ -74,6 +79,9 @@ var wantInstruments = []domain.Instrument{
 	{Symbol: "SIB0931USD", Exchange: domain.ExchangeNasdaqDubai,
 		NameEN: "SIB Sukuk Co. III Ltd 5.850% 29 Sep 2031", NameAR: "SIB Sukuk Company III Limited",
 		Class: domain.ClassSukuk, Currency: "USD", Sector: "Debt Instrument", Board: "202", Status: domain.StatusListed},
+	{Symbol: "SIBPRPUSD", Exchange: domain.ExchangeNasdaqDubai,
+		NameEN: "SIB Tier1 Sukuk Co 5.000% PRP", NameAR: "SIB Tier1 Sukuk Co 5.000% PRP",
+		Class: domain.ClassSukuk, Currency: "USD", Sector: "Debt Instrument", Board: "202", Status: domain.StatusSuspended},
 	{Symbol: "AMCUAE", Exchange: domain.ExchangeDFM,
 		NameEN: "AL Mal UAE Equity Fund", NameAR: "صندوق المال",
 		Class: domain.ClassFund, Currency: "AED", Status: domain.StatusDelisted},
@@ -140,7 +148,7 @@ func TestSecurityMasterParsesRecordedResponses(t *testing.T) {
 	}
 	wantBoards := []dfm.Board{
 		{Code: "200", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"equity", "fund"}, Lines: 3},
-		{Code: "202", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"bond", "sukuk"}, Lines: 6},
+		{Code: "202", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"bond", "sukuk"}, Lines: 8},
 		{Code: "203", Exchanges: []domain.Exchange{}, Classes: []domain.InstrumentClass{}, Lines: 1},
 		{Code: "210", Exchanges: []domain.Exchange{"NASDAQ_DUBAI"}, Classes: []domain.InstrumentClass{"equity"}, Lines: 1},
 		{Code: "510", Exchanges: []domain.Exchange{"DFM"}, Classes: []domain.InstrumentClass{"equity", "reit"}, Lines: 3},
@@ -186,8 +194,8 @@ func TestSecurityMasterRequests(t *testing.T) {
 		"GET /web/sf/v1/sectors?sf_culture=ar",
 		overview("EIB"), overview("EMAAR"), overview("NBD"), overview("DEPA"), overview("OC"), overview("BHMCAPITAL"),
 		overview("ENBDREIT"), overview("DPW"), overview("SHUAA-2007"), overview("DPWDU0926EUR"), overview("DUBAIFXN0143"),
-		overview("BCHNA0926CNY"), overview("EBIUH1129USD"), overview("AMLAKSK2010"), overview("AUBDUPRP2USD"),
-		overview("SIB0931USD"), overview("AMCUAE"), overview("EFF"), overview("ABTC"), overview("UAETF"),
+		overview("BCHNA0926CNY"), overview("EBIUH1129USD"), overview("EXFBJPRPUSD"), overview("AMLAKSK2010"),
+		overview("AUBDUPRP2USD"), overview("SIB0931USD"), overview("SIBPRPUSD"), overview("AMCUAE"), overview("EFF"), overview("ABTC"), overview("UAETF"),
 		overview("AMCREIT"), overview("AMCREIT-RI"),
 	}
 	if !slices.Equal(got, want) {
@@ -210,13 +218,38 @@ func TestSecurityMasterThrottlesOverviews(t *testing.T) {
 			at = append(at, r.At)
 		}
 	}
-	if len(at) != 22 {
-		t.Fatalf("got %d overview calls, want 22", len(at))
+	if len(at) != 24 {
+		t.Fatalf("got %d overview calls, want 24", len(at))
 	}
-	// 21 gaps of 40ms; one gap of slack absorbs network and timer jitter
+	// 23 gaps of 40ms; one gap of slack absorbs network and timer jitter
 	// without letting unthrottled calls, a few ms in all, pass.
-	if span, least := at[len(at)-1].Sub(at[0]), 20*every; span < least {
-		t.Errorf("22 overview calls took %s, want at least %s at one per %s", span, least, every)
+	if span, least := at[len(at)-1].Sub(at[0]), 22*every; span < least {
+		t.Errorf("24 overview calls took %s, want at least %s at one per %s", span, least, every)
+	}
+}
+
+func TestSecurityMasterThrottlesOverviewRetries(t *testing.T) {
+	srv := dfmtest.NewServer(t, dfmtest.SecurityMasterDir())
+	srv.FailNext("/cdn2/web/v1/get_security_overview", http.StatusServiceUnavailable, http.StatusBadGateway)
+	const every = 40 * time.Millisecond
+	c := &dfm.Client{BaseURL: srv.URL, OverviewInterval: every, RetryDelay: time.Millisecond}
+
+	if _, err := c.SecurityMaster(t.Context(), recordedAt); err != nil {
+		t.Fatalf("SecurityMaster() error = %v", err)
+	}
+
+	var at []time.Time
+	for _, r := range srv.Requests() {
+		if r.Path == "/cdn2/web/v1/get_security_overview" && r.Query.Get("symbol") == "EIB" {
+			at = append(at, r.At)
+		}
+	}
+	if len(at) != 3 {
+		t.Fatalf("got %d overview calls for EIB, want 3: two failures, then success", len(at))
+	}
+	// 2 gaps of 40ms with one gap of slack; retries 1ms apart take ~2ms.
+	if span := at[2].Sub(at[0]); span < every {
+		t.Errorf("3 overview attempts took %s, want at least %s at one per %s", span, every, every)
 	}
 }
 
@@ -299,6 +332,13 @@ func TestSecurityMasterErrors(t *testing.T) {
 			wantErr: "dfm: LiteSecuritiesLists en has no equities",
 		},
 		{
+			name: "market watch is empty",
+			setup: func(t *testing.T, s *dfmtest.Server) {
+				s.Replace("mw-stocks.json", writeFile(t, `[]`))
+			},
+			wantErr: "dfm: market watch has no lines",
+		},
+		{
 			name: "sectors list without the DFM Index",
 			setup: func(t *testing.T, s *dfmtest.Server) {
 				s.Replace("sectors-en.json", writeFile(t, `{"value":[{"SectorID":"11"}]}`))
@@ -349,6 +389,74 @@ func TestSecurityMasterSkipsUnusableLines(t *testing.T) {
 	if want := []domain.Symbol{"EMAAR", "DFMGI", "DFMFI", "DFMII", "DFMREI", "DFMUI", "DFMCMI", "DFMMI", "DFMCSI", "DFMCDI"}; !slices.Equal(got, want) {
 		t.Errorf("instruments = %q, want %q", got, want)
 	}
+}
+
+func TestSecurityMasterCurrency(t *testing.T) {
+	// rate is the market-watch rate; empty means the line is not in the
+	// market watch. The PRPUSD codes are live perpetuals with rate 1.
+	tests := []struct {
+		symbol, group, rate string
+		want                domain.Currency
+	}{
+		{"EXFBJPRPUSD", "Bonds", "1.0", "USD"},
+		{"MASQUHPRPUSD", "Bonds", "1.0", "USD"},
+		{"SIB2PRPUSD", "Sukuks", "1.0", "USD"},
+		{"SIBPRPUSD", "Sukuks", "1.0", "USD"},
+		{"DPWDU0926EUR", "Bonds", "1.0", "EUR"},
+		{"BCHNA0926CNY", "Bonds", "1.0", "CNY"},
+		{"EIBUH331USD2", "Bonds", "1.0", "USD"},
+		{"AUBDUPRP2USD", "Sukuks", "1.0", "USD"},
+		{"UAESUKUK0728", "Sukuks", "1.0", "AED"},
+		{"DUBAIFXN0517", "Bonds", "", "AED"},
+		{"DUBAIFXNXXXX", "Sukuks", "", "AED"},
+		{"DIBAED", "Sukuks", "3.670000000", "USD"},
+		{"INDO21235USD", "Funds", "1.0", "USD"},
+		{"OC", "Equities", "3.670000000", "USD"},
+		{"GULFEUR", "Equities", "1.0", "AED"},
+		{"ALPHAUSD", "Equities", "", "AED"},
+		{"BETA1GBP", "Equities", "1.0", "AED"},
+	}
+	type line struct {
+		ID             string
+		SecuritySymbol string
+		FullName       string
+		Exchange       string
+	}
+	lists := map[string][]line{}
+	var stocks []map[string]any
+	srv := dfmtest.NewServer(t, dfmtest.SecurityMasterDir())
+	noOverview := writeFile(t, "[]")
+	for i, tt := range tests {
+		lists[tt.group] = append(lists[tt.group], line{ID: strconv.Itoa(i), SecuritySymbol: tt.symbol, FullName: tt.symbol, Exchange: "Nasdaq Dubai"})
+		if tt.rate != "" {
+			stocks = append(stocks, map[string]any{"id": tt.symbol, "market": "202", "suspended": "A", "rate": json.Number(tt.rate)})
+		}
+		srv.Replace("overview/"+tt.symbol+".json", noOverview)
+	}
+	srv.Replace("lite-securities-lists-en.json", writeFile(t, marshal(t, lists)))
+	srv.Replace("mw-stocks.json", writeFile(t, marshal(t, stocks)))
+
+	m, err := newClient(srv).SecurityMaster(t.Context(), recordedAt)
+	if err != nil {
+		t.Fatalf("SecurityMaster() error = %v", err)
+	}
+	if len(m.Skipped) != 0 {
+		t.Errorf("Skipped = %+v, want none", m.Skipped)
+	}
+	for _, tt := range tests {
+		if got := find(t, m, domain.Symbol(tt.symbol)).Currency; got != tt.want {
+			t.Errorf("%s (%s, rate %q) currency = %s, want %s", tt.symbol, tt.group, tt.rate, got, tt.want)
+		}
+	}
+}
+
+func marshal(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func find(t *testing.T, m dfm.SecurityMaster, sym domain.Symbol) domain.Instrument {

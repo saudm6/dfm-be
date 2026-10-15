@@ -23,8 +23,14 @@ SELECT * FROM instruments WHERE symbol = $1;
 INSERT INTO boards (code, exchanges, classes, lines)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (code) DO UPDATE SET
-    exchanges = EXCLUDED.exchanges, classes = EXCLUDED.classes, lines = EXCLUDED.lines, updated_at = now()
-WHERE (boards.exchanges, boards.classes, boards.lines) IS DISTINCT FROM (EXCLUDED.exchanges, EXCLUDED.classes, EXCLUDED.lines);
+    exchanges = EXCLUDED.exchanges, classes = EXCLUDED.classes, lines = EXCLUDED.lines,
+    missing_since = NULL, updated_at = now()
+WHERE (boards.exchanges, boards.classes, boards.lines, boards.missing_since)
+    IS DISTINCT FROM (EXCLUDED.exchanges, EXCLUDED.classes, EXCLUDED.lines, NULL::timestamptz);
+
+-- name: MarkMissingBoards :execrows
+UPDATE boards SET lines = 0, missing_since = @missing_since, updated_at = now()
+WHERE missing_since IS NULL AND NOT (code = ANY(@present::text[]));
 
 -- name: ListBoards :many
 SELECT * FROM boards ORDER BY code;
