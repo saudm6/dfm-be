@@ -34,6 +34,7 @@ func TestLoad(t *testing.T) {
 			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL},
 			want: config.Config{
 				HTTPAddr: ":8080",
+				Session:  config.Session{SessionIdleTimeout: 12 * time.Hour, SessionMaxAge: 168 * time.Hour, CookieSecure: true},
 				Base:     config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
 				Market:   defaultMarket,
 				DFM:      config.DFM{APIBaseURL: "https://api2.dfm.ae"},
@@ -43,12 +44,14 @@ func TestLoad(t *testing.T) {
 			name: "all set",
 			environ: []string{
 				"DFM_HTTP_ADDR=127.0.0.1:9000", "DFM_LOG_LEVEL=debug", "DFM_DATABASE_URL=" + dbURL,
+				"DFM_SESSION_IDLE_TIMEOUT=30m", "DFM_SESSION_MAX_AGE=24h", "DFM_COOKIE_SECURE=false",
 				"DFM_SESSION_PRE_OPEN=09:00", "DFM_SESSION_OPEN=09:30", "DFM_SESSION_CLOSING_AUCTION=13:45",
 				"DFM_SESSION_CLOSE=14:00", "DFM_TRADING_DAYS=Sun,Mon,Tue,Wed,Thu",
 				"DFM_API_BASE_URL=http://127.0.0.1:9001",
 			},
 			want: config.Config{
 				HTTPAddr: "127.0.0.1:9000",
+				Session:  config.Session{SessionIdleTimeout: 30 * time.Minute, SessionMaxAge: 24 * time.Hour, CookieSecure: false},
 				Base:     config.Base{LogLevel: slog.LevelDebug, DatabaseURL: dbURL},
 				Market: config.Market{
 					PreOpen:        9 * 60,
@@ -102,6 +105,21 @@ func TestLoadErrors(t *testing.T) {
 			name:    "invalid log level",
 			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_LOG_LEVEL=loud", "DFM_DATABASE_URL=" + dbURL},
 			wantErr: `config: env: parse error on field "LogLevel" of type "slog.Level": slog: level string "loud": unknown name`,
+		},
+		{
+			name:    "zero idle timeout",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_SESSION_IDLE_TIMEOUT=0s"},
+			wantErr: `config: DFM_SESSION_IDLE_TIMEOUT and DFM_SESSION_MAX_AGE must be positive`,
+		},
+		{
+			name:    "negative max age",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_SESSION_MAX_AGE=-1h"},
+			wantErr: `config: DFM_SESSION_IDLE_TIMEOUT and DFM_SESSION_MAX_AGE must be positive`,
+		},
+		{
+			name:    "invalid cookie switch",
+			environ: []string{"DFM_HTTP_ADDR=:8080", "DFM_DATABASE_URL=" + dbURL, "DFM_COOKIE_SECURE=maybe"},
+			wantErr: `config: env: parse error on field "CookieSecure" of type "bool": strconv.ParseBool: parsing "maybe": invalid syntax`,
 		},
 		{
 			name:    "invalid session time",

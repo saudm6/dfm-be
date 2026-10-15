@@ -168,7 +168,7 @@ func TestBinding(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := httpapi.NewParamTestRouter(slog.New(slog.DiscardHandler), bindingServer{})
+			router := httpapi.NewParamTestRouter(slog.New(slog.DiscardHandler), bindingServer{}, nil)
 			req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()

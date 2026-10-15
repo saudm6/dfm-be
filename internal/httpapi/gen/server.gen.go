@@ -14,9 +14,15 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/shopspring/decimal"
+)
+
+const (
+	CsrfTokenScopes     csrfTokenContextKey     = "csrfToken.Scopes"
+	SessionCookieScopes sessionCookieContextKey = "sessionCookie.Scopes"
 )
 
 // Defines values for HealthStatus.
@@ -143,9 +149,9 @@ type Decimal = decimal.Decimal
 type Error struct {
 	// Code Stable machine-readable reason in snake_case. Clients branch on
 	// this, never on message. Known codes: bad_request, unauthorized,
-	// forbidden, not_found, method_not_allowed, conflict, internal,
-	// unavailable (a dependency such as the database did not answer;
-	// retry later).
+	// forbidden, not_found, method_not_allowed, conflict,
+	// unsupported_media_type, internal, unavailable (a dependency such
+	// as the database did not answer; retry later).
 	//
 	//
 	// Examples: not_found
@@ -226,6 +232,16 @@ type InstrumentStatus = domain.InstrumentStatus
 // Interval Bar length, one minute or one trading day.
 type Interval = domain.Interval
 
+// LoginRequest defines model for LoginRequest.
+type LoginRequest struct {
+	Password string `json:"password"`
+
+	// Username Case-insensitive.
+	//
+	// Examples: saud
+	Username string `json:"username"`
+}
+
 // MarketSession The phase of the DFM trading day in Asia/Dubai: pre-open from 09:30,
 // continuous from 10:00, closing-auction from 14:45 (DFM's pre-closing
 // and trade-at-last sessions), and closed from 15:00 and on days DFM
@@ -248,6 +264,21 @@ type MarketStatus struct {
 	//
 	// Examples: 2026-10-19T10:00:00+04:00
 	NextOpen time.Time `json:"nextOpen"`
+}
+
+// Me The signed-in account and its session.
+type Me struct {
+	ID int64 `json:"id"`
+
+	// Username Examples: saud
+	Username string `json:"username"`
+
+	// Role owner has every permission, including market data and trading.
+	// member can use chat and layouts only.
+	Role Role `json:"role"`
+
+	// CSRFToken Send in the X-CSRF-Token header on POST, PUT, PATCH, and DELETE.
+	CSRFToken string `json:"csrfToken"`
 }
 
 // Quote The latest level 1 snapshot of one instrument. A price of "0" or a
@@ -330,6 +361,10 @@ type Quote struct {
 	Volume int64 `json:"volume"`
 }
 
+// Role owner has every permission, including market data and trading.
+// member can use chat and layouts only.
+type Role = auth.Role
+
 // Source The feed a value came from.
 type Source = domain.Source
 
@@ -341,14 +376,32 @@ type Source = domain.Source
 // Examples: EMAAR
 type Symbol = string
 
+// csrfTokenContextKey is the context key for csrfToken security scheme
+type csrfTokenContextKey string
+
+// sessionCookieContextKey is the context key for sessionCookie security scheme
+type sessionCookieContextKey string
+
+// LoginJSONRequestBody defines body for Login for application/json ContentType.
+type LoginJSONRequestBody = LoginRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Login Sign in and start a session
+	// (POST /auth/login)
+	Login(w http.ResponseWriter, r *http.Request)
+	// Logout End the current session
+	// (POST /auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request)
 	// GetHealth Report whether the service and its database are up
 	// (GET /healthz)
 	GetHealth(w http.ResponseWriter, r *http.Request)
 	// GetMarketStatus Report the DFM session now and when continuous trading next opens
 	// (GET /market/status)
 	GetMarketStatus(w http.ResponseWriter, r *http.Request)
+	// GetMe Describe the signed-in account and its session
+	// (GET /me)
+	GetMe(w http.ResponseWriter, r *http.Request)
 	// GetOpenAPISpec Download this contract
 	// (GET /openapi.yaml)
 	GetOpenAPISpec(w http.ResponseWriter, r *http.Request)
@@ -357,6 +410,18 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// Login Sign in and start a session
+// (POST /auth/login)
+func (_ Unimplemented) Login(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Logout End the current session
+// (POST /auth/logout)
+func (_ Unimplemented) Logout(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // GetHealth Report whether the service and its database are up
 // (GET /healthz)
@@ -367,6 +432,12 @@ func (_ Unimplemented) GetHealth(w http.ResponseWriter, r *http.Request) {
 // GetMarketStatus Report the DFM session now and when continuous trading next opens
 // (GET /market/status)
 func (_ Unimplemented) GetMarketStatus(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMe Describe the signed-in account and its session
+// (GET /me)
+func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -385,6 +456,42 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// Login operation middleware
+func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Login(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, CsrfTokenScopes, []string{})
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
 
@@ -402,8 +509,34 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 // GetMarketStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetMarketStatus(w http.ResponseWriter, r *http.Request) {
 
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMarketStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMe operation middleware
+func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, SessionCookieScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMe(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -547,6 +680,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/openapi.yaml", wrapper.GetOpenAPISpec)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/login", wrapper.Login)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/auth/logout", wrapper.Logout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/me", wrapper.GetMe)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/market/status", wrapper.GetMarketStatus)
 	})
 
@@ -554,6 +696,121 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 }
 
 type ErrorJSONResponse Error
+
+type LoginRequestObject struct {
+	Body *LoginJSONRequestBody
+}
+
+type LoginResponseObject interface {
+	VisitLoginResponse(w http.ResponseWriter) error
+}
+
+type Login200ResponseHeaders struct {
+	CacheControl string
+	SetCookie    string
+}
+
+type Login200JSONResponse struct {
+	Body    Me
+	Headers Login200ResponseHeaders
+}
+
+func (response Login200JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.Header().Set("Set-Cookie", fmt.Sprint(response.Headers.SetCookie))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login401JSONResponse Error
+
+func (response Login401JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login415JSONResponse Error
+
+func (response Login415JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogindefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response LogindefaultJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogoutRequestObject struct {
+}
+
+type LogoutResponseObject interface {
+	VisitLogoutResponse(w http.ResponseWriter) error
+}
+
+type Logout204ResponseHeaders struct {
+	SetCookie string
+}
+
+type Logout204Response struct {
+	Headers Logout204ResponseHeaders
+}
+
+func (response Logout204Response) VisitLogoutResponse(w http.ResponseWriter) error {
+	w.Header().Set("Set-Cookie", fmt.Sprint(response.Headers.SetCookie))
+	w.WriteHeader(204)
+	return nil
+}
+
+type LogoutdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response LogoutdefaultJSONResponse) VisitLogoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type GetHealthRequestObject struct {
 }
@@ -659,6 +916,52 @@ func (response GetMarketStatusdefaultJSONResponse) VisitGetMarketStatusResponse(
 	return err
 }
 
+type GetMeRequestObject struct {
+}
+
+type GetMeResponseObject interface {
+	VisitGetMeResponse(w http.ResponseWriter) error
+}
+
+type GetMe200ResponseHeaders struct {
+	CacheControl string
+}
+
+type GetMe200JSONResponse struct {
+	Body    Me
+	Headers GetMe200ResponseHeaders
+}
+
+func (response GetMe200JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprint(response.Headers.CacheControl))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetMedefaultJSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetOpenAPISpecRequestObject struct {
 }
 
@@ -705,12 +1008,21 @@ func (response GetOpenAPISpecdefaultJSONResponse) VisitGetOpenAPISpecResponse(w 
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// Login Sign in and start a session
+	// (POST /auth/login)
+	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
+	// Logout End the current session
+	// (POST /auth/logout)
+	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
 	// GetHealth Report whether the service and its database are up
 	// (GET /healthz)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
 	// GetMarketStatus Report the DFM session now and when continuous trading next opens
 	// (GET /market/status)
 	GetMarketStatus(ctx context.Context, request GetMarketStatusRequestObject) (GetMarketStatusResponseObject, error)
+	// GetMe Describe the signed-in account and its session
+	// (GET /me)
+	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
 	// GetOpenAPISpec Download this contract
 	// (GET /openapi.yaml)
 	GetOpenAPISpec(ctx context.Context, request GetOpenAPISpecRequestObject) (GetOpenAPISpecResponseObject, error)
@@ -755,6 +1067,61 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
+// Login operation middleware
+func (sh *strictHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var request LoginRequestObject
+
+	var body LoginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Login(ctx, request.(LoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Login")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LoginResponseObject); ok {
+		if err := validResponse.VisitLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Logout operation middleware
+func (sh *strictHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	var request LogoutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Logout(ctx, request.(LogoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Logout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LogoutResponseObject); ok {
+		if err := validResponse.VisitLogoutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetHealth operation middleware
 func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	var request GetHealthRequestObject
@@ -796,6 +1163,30 @@ func (sh *strictHandler) GetMarketStatus(w http.ResponseWriter, r *http.Request)
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMarketStatusResponseObject); ok {
 		if err := validResponse.VisitGetMarketStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMe operation middleware
+func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	var request GetMeRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMe(ctx, request.(GetMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMeResponseObject); ok {
+		if err := validResponse.VisitGetMeResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

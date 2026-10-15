@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,13 +100,15 @@ func TestMarketStatus(t *testing.T) {
 			wantLog:    "{\"level\":\"ERROR\",\"msg\":\"market status: load calendar failed\",\"error\":\"connection refused\",\"request_id\":\"req-1\"}\n",
 		},
 	}
+	f := newAuthFixture(t)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var logs bytes.Buffer
-			router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, tt.cals, at(tt.now))
+			router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, tt.cals, at(tt.now), f.sessions)
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
 			req.Header.Set("X-Request-Id", "req-1")
+			req.AddCookie(signIn(t, router))
 
 			router.ServeHTTP(rec, req)
 
@@ -125,13 +128,27 @@ func TestMarketStatus(t *testing.T) {
 	}
 }
 
+func TestMarketStatusNeedsSession(t *testing.T) {
+	f := newAuthFixture(t)
+	router := httpapi.NewRouter(errorLogger(&bytes.Buffer{}), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil))
+
+	if want := `{"code":"unauthorized","message":"sign in to use /market/status"}` + "\n"; rec.Code != http.StatusUnauthorized || rec.Body.String() != want {
+		t.Errorf("GET /market/status = %d %q, want 401 %q", rec.Code, rec.Body.String(), want)
+	}
+}
+
 func TestMarketStatusTimesOutLoad(t *testing.T) {
+	f := newAuthFixture(t)
 	var logs bytes.Buffer
 	called := make(chan time.Duration, 1)
-	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday))
+	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday), f.sessions)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
 	req.Header.Set("X-Request-Id", "req-1")
+	req.AddCookie(signIn(t, router))
 
 	start := time.Now()
 	router.ServeHTTP(rec, req)
@@ -155,20 +172,41 @@ func TestMarketStatusTimesOutLoad(t *testing.T) {
 }
 
 func TestMarketStatusClientCancelIsNotAnError(t *testing.T) {
+	f := newAuthFixture(t)
 	var logs bytes.Buffer
 	called := make(chan time.Duration, 1)
-	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday))
+	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday), f.sessions)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
+	req.AddCookie(signIn(t, router))
 	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		<-called
 		cancel()
 	}()
 
-	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(ctx, http.MethodGet, "/market/status", nil))
+	router.ServeHTTP(httptest.NewRecorder(), req.WithContext(ctx))
 
 	if got := logs.String(); got != "" {
 		t.Errorf("logs = %q, want none at ERROR", got)
 	}
+}
+
+// signIn signs the member amal in through router and returns her session
+// cookie.
+func signIn(t *testing.T, router http.Handler) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/auth/login", strings.NewReader(`{"username":"amal","password":"`+password+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login = %d %s, want 200", rec.Code, rec.Body)
+	}
+	c, err := http.ParseSetCookie(rec.Header().Get("Set-Cookie"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Cookie{Name: c.Name, Value: c.Value}
 }
 
 // errorLogger logs records at ERROR and above to w as JSON, without times.

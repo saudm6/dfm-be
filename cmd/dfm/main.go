@@ -2,6 +2,8 @@
 //
 // With no arguments it migrates the database and serves the HTTP API.
 // "dfm migrate" applies pending database migrations and exits.
+// "dfm user create --username NAME --role owner|member" migrates the database
+// and adds an account; it reads the password from the first line of stdin.
 // "dfm calendar close --date YYYY-MM-DD" records an unscheduled closure of DFM.
 // "dfm sync instruments" refreshes the security master from DFM's web API.
 //
@@ -11,6 +13,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -21,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +32,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/config"
 	"github.com/saudm6/dfm-be/internal/dfm"
@@ -39,7 +44,7 @@ import (
 
 const (
 	shutdownTimeout = 10 * time.Second
-	usage           = `usage: dfm [migrate | calendar close --date YYYY-MM-DD [--reason TEXT] | sync instruments]`
+	usage           = `usage: dfm [migrate | user create --username NAME --role owner|member | calendar close --date YYYY-MM-DD [--reason TEXT] | sync instruments]`
 	// instrumentSyncBeforePreOpen is how long before the pre-open session
 	// the daily instrument sync starts.
 	instrumentSyncBeforePreOpen = 30 * time.Minute
@@ -50,7 +55,7 @@ var clock = time.Now
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := run(ctx, os.Args[1:], os.Environ(), os.Stdout)
+	err := run(ctx, os.Args[1:], os.Environ(), os.Stdin, os.Stdout)
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dfm:", err)
@@ -59,12 +64,14 @@ func main() {
 }
 
 // run executes the command named by args. It writes JSON logs to stdout.
-func run(ctx context.Context, args, environ []string, stdout io.Writer) error {
+func run(ctx context.Context, args, environ []string, stdin io.Reader, stdout io.Writer) error {
 	switch {
 	case len(args) == 0:
 		return serve(ctx, environ, stdout)
 	case len(args) == 1 && args[0] == "migrate":
 		return migrate(ctx, environ, stdout)
+	case len(args) >= 2 && args[0] == "user" && args[1] == "create":
+		return createUser(ctx, args[2:], environ, stdin, stdout)
 	case len(args) >= 2 && args[0] == "calendar" && args[1] == "close":
 		return closeMarket(ctx, args[2:], environ, stdout)
 	case len(args) == 2 && args[0] == "sync" && args[1] == "instruments":
@@ -72,6 +79,50 @@ func run(ctx context.Context, args, environ []string, stdout io.Writer) error {
 	default:
 		return errors.New(usage)
 	}
+}
+
+// createUser migrates the database and adds the account described by args,
+// with the password read from the first line of stdin.
+func createUser(ctx context.Context, args, environ []string, stdin io.Reader, stdout io.Writer) error {
+	fs := flag.NewFlagSet("dfm user create", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	username := fs.String("username", "", "account name")
+	roleName := fs.String("role", "", "owner or member")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		return errors.New(usage)
+	}
+	if _, err := auth.NormalizeUsername(*username); err != nil {
+		return err
+	}
+	role, err := auth.ParseRole(*roleName)
+	if err != nil {
+		return fmt.Errorf("--role must be owner or member, not %q", *roleName)
+	}
+	password, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read password from stdin: %w", err)
+	}
+	password = strings.TrimRight(password, "\r\n")
+
+	cfg, err := config.LoadBase(environ)
+	if err != nil {
+		return err
+	}
+	logger := newLogger(stdout, cfg.LogLevel)
+	pool, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := applyMigrations(ctx, logger, pool); err != nil {
+		return err
+	}
+	user, err := auth.NewService(pool, auth.Options{}).CreateUser(ctx, *username, password, role)
+	if err != nil {
+		return err
+	}
+	logger.Info("user created", "id", user.ID, "username", user.Username, "role", string(user.Role))
+	return nil
 }
 
 // closeMarket records that DFM is closed on the day given by --date.
@@ -210,7 +261,11 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	hours := cfg.Market.Hours()
 	cals := calendar.Loader{DB: pool, Hours: hours}
 	srv := &http.Server{
-		Handler:           httpapi.NewRouter(logger, pool, cals, clock),
+		Handler: httpapi.NewRouter(logger, pool, cals, clock, auth.NewService(pool, auth.Options{
+			IdleTimeout:    cfg.SessionIdleTimeout,
+			MaxAge:         cfg.SessionMaxAge,
+			InsecureCookie: !cfg.CookieSecure,
+		})),
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}

@@ -22,7 +22,7 @@ type fakeDB struct{ err error }
 func (f fakeDB) Ping(context.Context) error { return f.err }
 
 func newRouter(logger *slog.Logger, db fakeDB) http.Handler {
-	return httpapi.NewRouter(logger, db, fakeCalendars{}, at(thursday))
+	return httpapi.NewRouter(logger, db, fakeCalendars{}, at(thursday), nil)
 }
 
 func TestRouter(t *testing.T) {
@@ -142,7 +142,7 @@ func (failingServer) GetHealth(context.Context, gen.GetHealthRequestObject) (gen
 
 func TestRouterHandlerErrorSendsErrorBody(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{})
+	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{}, nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
@@ -234,7 +234,7 @@ func TestHealthzLogsDatabaseError(t *testing.T) {
 
 func TestRouterPanicSendsErrorBody(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{})
+	router := httpapi.NewRouterWithServer(slog.New(slog.NewJSONHandler(&logs, nil)), failingServer{}, nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/openapi.yaml", nil))

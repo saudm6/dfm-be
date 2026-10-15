@@ -1,6 +1,7 @@
 # A test-only contract. It is not served. Router tests generate a server from
-# it to check how path, query, and body values bind to the domain types, using
-# the same router setup and error handlers as api/openapi.yaml.
+# it to check how path, query, and body values bind to the domain types, and
+# how security requirements are enforced, using the same router setup, auth
+# middleware and error handlers as api/openapi.yaml.
 openapi: 3.1.0
 info:
   title: Parameter binding test contract
@@ -63,7 +64,69 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /quotes:
+    get:
+      operationId: listQuotes
+      description: A market-data operation, open to roles with market data only.
+      security:
+        - sessionCookie: [marketData]
+      responses:
+        "204":
+          description: Allowed.
+        default:
+          $ref: "#/components/responses/Error"
+
+  /messages:
+    post:
+      operationId: postMessage
+      description: A chat operation, open to every signed-in account.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: Allowed.
+        default:
+          $ref: "#/components/responses/Error"
+
+  /unlisted:
+    get:
+      operationId: getUnlisted
+      description: |
+        An empty security requirement, which OpenAPI reads as "no auth
+        needed". The operation is not on the router's public list, so it
+        still needs a session.
+      security:
+        - {}
+      responses:
+        "204":
+          description: Allowed.
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: postUnlisted
+      description: |
+        A CSRF token without a session cookie. The operation is not on the
+        router's public list, so it still needs a session.
+      security:
+        - csrfToken: []
+      responses:
+        "204":
+          description: Allowed.
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: dfm_session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
   responses:
     Error:
       description: The request failed.
