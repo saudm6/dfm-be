@@ -70,7 +70,7 @@ Each heading names the feature its steps finish. Shared steps sit under the firs
 
 ### F02 Live quotes and watchlists
 
-- [ ] **21.** [dfm-be#12](https://github.com/saudm6/dfm-be/issues/12) Spike: choose the IBKR API and prove DFM quotes on a paper account. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
+- [x] **21.** [dfm-be#12](https://github.com/saudm6/dfm-be/issues/12) Spike: choose the IBKR API and prove DFM quotes on a paper account. Wave 2. Waits on step 1 ([dfm-be#1](https://github.com/saudm6/dfm-be/issues/1)).
 - [ ] **22.** [dfm-be#13](https://github.com/saudm6/dfm-be/issues/13) Manage the IBKR session lifecycle. Wave 7. Waits on step 9 ([dfm-be#9](https://github.com/saudm6/dfm-be/issues/9)), step 21 ([dfm-be#12](https://github.com/saudm6/dfm-be/issues/12)).
 - [ ] **23.** [dfm-be#14](https://github.com/saudm6/dfm-be/issues/14) Map DFM symbols to IBKR contracts. Wave 8. Waits on step 16 ([dfm-be#10](https://github.com/saudm6/dfm-be/issues/10)), step 22 ([dfm-be#13](https://github.com/saudm6/dfm-be/issues/13)).
 - [ ] **24.** [dfm-be#15](https://github.com/saudm6/dfm-be/issues/15) Stream IBKR level 1 quotes within the line budget. Wave 9. Waits on step 6 ([dfm-be#6](https://github.com/saudm6/dfm-be/issues/6)), step 23 ([dfm-be#14](https://github.com/saudm6/dfm-be/issues/14)).
