@@ -60,3 +60,14 @@ type User struct {
 	Role         string
 	CreatedAt    time.Time
 }
+
+type UserDocument struct {
+	UserID        int64
+	Kind          domain.DocumentKind
+	Name          string
+	Body          []byte
+	SchemaVersion int32
+	Etag          string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}

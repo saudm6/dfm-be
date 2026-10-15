@@ -22,7 +22,7 @@ type fakeDB struct{ err error }
 func (f fakeDB) Ping(context.Context) error { return f.err }
 
 func newRouter(logger *slog.Logger, db fakeDB) http.Handler {
-	return httpapi.NewRouter(logger, db, fakeCalendars{}, at(thursday), nil)
+	return httpapi.NewRouter(logger, db, fakeCalendars{}, at(thursday), nil, nil)
 }
 
 func TestRouter(t *testing.T) {

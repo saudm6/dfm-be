@@ -263,6 +263,167 @@ paths:
   # launchpad (F06)
   # ==========================================================================
 
+  /me/documents/{kind}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentKindParam"
+    get:
+      operationId: listMyDocuments
+      summary: List the signed-in user's documents of one kind
+      description: |
+        Names, entity tags, and update times of the signed-in user's
+        documents of this kind, ordered by name. Bodies are not included.
+      tags: [launchpad]
+      responses:
+        "200":
+          description: The documents, possibly none.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentList"
+              example:
+                documents:
+                  - {name: Morning, etag: "\"0f1d6a2b9c3e4d5f60718293a4b5c6d7\"", updatedAt: "2026-10-15T09:30:00Z"}
+        default:
+          $ref: "#/components/responses/Error"
+
+  /me/documents/{kind}/{name}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentKindParam"
+      - $ref: "#/components/parameters/DocumentNameParam"
+    get:
+      operationId: getMyDocument
+      summary: Get one of the signed-in user's documents
+      description: |
+        Returns the document and its strong entity tag in the ETag header.
+        Send that tag in If-Match to update or delete the document. Each
+        account sees only its own documents; another account's document of
+        the same kind and name is 404.
+      tags: [launchpad]
+      responses:
+        "200":
+          description: The document.
+          headers:
+            ETag:
+              $ref: "#/components/headers/DocumentETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "404":
+          description: The signed-in user has no document of this kind and name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: not_found, message: no layout named "Morning"}
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: putMyDocument
+      summary: Create or replace one of the signed-in user's documents
+      description: |
+        Without If-Match, creates the document and fails with 428 if it
+        already exists. With If-Match, replaces the document only if it
+        exists and its current entity tag is one of those listed (or the
+        header is `*`); otherwise 412, so a client never overwrites a
+        version it has not seen. The request body is at most 262144 bytes
+        (256 KiB); a larger one gets 413 before it is decoded.
+      tags: [launchpad]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutDocumentRequest"
+      responses:
+        "200":
+          description: Replaced.
+          headers:
+            ETag:
+              $ref: "#/components/headers/DocumentETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentInfo"
+        "201":
+          description: Created.
+          headers:
+            ETag:
+              $ref: "#/components/headers/DocumentETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentInfo"
+        "412":
+          description: |
+            If-Match was sent, and the document does not exist or its entity
+            tag is not one of those listed. GET it again and retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: precondition_failed, message: "layout \"Morning\" has changed or does not exist; get it again"}
+        "413":
+          description: The request body is larger than 262144 bytes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: content_too_large, message: request body is larger than 262144 bytes}
+        "428":
+          description: The document exists and the request has no If-Match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: precondition_required, message: "layout \"Morning\" exists; send If-Match with its ETag to replace it"}
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteMyDocument
+      summary: Delete one of the signed-in user's documents
+      description: |
+        Needs If-Match: deletes the document only if its current entity tag
+        is one of those listed (or the header is `*`).
+      tags: [launchpad]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          description: The signed-in user has no document of this kind and name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: not_found, message: no layout named "Morning"}
+        "412":
+          description: The document's entity tag is not one of those in If-Match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: precondition_failed, message: "layout \"Morning\" has changed or does not exist; get it again"}
+        "428":
+          description: The request has no If-Match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: precondition_required, message: send If-Match with the document's ETag to delete it}
+        default:
+          $ref: "#/components/responses/Error"
+
+
   # ==========================================================================
   # studies (F07)
   # ==========================================================================
@@ -314,6 +475,11 @@ components:
         on every POST, PUT, PATCH, and DELETE that needs a session.
 
   headers:
+    DocumentETag:
+      description: The document's strong entity tag, quoted, for example `"0f1d6a2b9c3e4d5f60718293a4b5c6d7"`.
+      required: true
+      schema:
+        type: string
     NoStore:
       description: |
         `no-store`, on responses that carry the CSRF token, so no cache
@@ -322,6 +488,29 @@ components:
       schema:
         type: string
         const: no-store
+
+  parameters:
+    DocumentKindParam:
+      name: kind
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/DocumentKind"
+    DocumentNameParam:
+      name: name
+      in: path
+      required: true
+      description: The name of the document, a DocumentName. Any other value gets 400.
+      schema:
+        type: string
+    IfMatch:
+      name: If-Match
+      in: header
+      description: |
+        `*` or a comma-separated list of entity tags, as returned in ETag.
+        Weak tags (`W/"..."`) never match.
+      schema:
+        type: string
 
   responses:
     Error:
@@ -347,8 +536,10 @@ components:
             Stable machine-readable reason in snake_case. Clients branch on
             this, never on message. Known codes: bad_request, unauthorized,
             forbidden, not_found, method_not_allowed, conflict,
-            unsupported_media_type, internal, unavailable (a dependency such
-            as the database did not answer; retry later).
+            precondition_failed (an If-Match precondition does not hold),
+            content_too_large, precondition_required (the request needs
+            If-Match), unsupported_media_type, internal, unavailable (a
+            dependency such as the database did not answer; retry later).
           examples: [not_found]
         message:
           type: string
@@ -701,6 +892,97 @@ components:
     # ==========================================================================
     # launchpad (F06)
     # ==========================================================================
+
+    DocumentKind:
+      type: string
+      description: What a document holds, a workspace `layout` or a `chart_template`.
+      enum: [layout, chart_template]
+      x-go-type: domain.DocumentKind
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/domain
+
+    DocumentName:
+      type: string
+      description: |
+        1 to 64 characters of A-Z, a-z, 0-9, space, '_', '.' and '-',
+        starting with a letter or digit and not ending with a space.
+        Case-sensitive. Percent-encode spaces in the path.
+      minLength: 1
+      maxLength: 64
+      pattern: "^[A-Za-z0-9]([A-Za-z0-9 _.-]{0,62}[A-Za-z0-9_.-])?$"
+      examples: [Morning]
+
+    DocumentBody:
+      type: object
+      description: |
+        The document itself: any JSON object, kept as written apart from
+        insignificant whitespace. The server does not interpret it.
+      additionalProperties: true
+      # The generated code already imports encoding/json.
+      x-go-type: json.RawMessage
+
+    Document:
+      type: object
+      required: [kind, name, schemaVersion, body]
+      properties:
+        kind:
+          $ref: "#/components/schemas/DocumentKind"
+          x-order: 1
+        name:
+          $ref: "#/components/schemas/DocumentName"
+          x-order: 2
+        schemaVersion:
+          type: integer
+          format: int32
+          minimum: 1
+          description: The version of the client's schema for body.
+          x-order: 3
+        body:
+          $ref: "#/components/schemas/DocumentBody"
+          x-order: 4
+
+    PutDocumentRequest:
+      type: object
+      required: [schemaVersion, body]
+      properties:
+        schemaVersion:
+          type: integer
+          format: int32
+          minimum: 1
+          description: The version of the client's schema for body.
+          x-order: 1
+        body:
+          $ref: "#/components/schemas/DocumentBody"
+          x-order: 2
+
+    DocumentInfo:
+      type: object
+      description: A stored document without its body.
+      required: [name, etag, updatedAt]
+      properties:
+        name:
+          $ref: "#/components/schemas/DocumentName"
+          x-order: 1
+        etag:
+          type: string
+          description: The document's entity tag, quoted, as sent in the ETag header. Send it as is in If-Match.
+          examples: ["\"0f1d6a2b9c3e4d5f60718293a4b5c6d7\""]
+          x-go-name: ETag
+          x-order: 2
+        updatedAt:
+          type: string
+          format: date-time
+          x-order: 3
+
+    DocumentList:
+      type: object
+      required: [documents]
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocumentInfo"
+
 
     # ==========================================================================
     # studies (F07)
