@@ -96,7 +96,7 @@ func TestMarketStatus(t *testing.T) {
 			now:        thursday,
 			wantStatus: http.StatusServiceUnavailable,
 			wantBody:   "{\"code\":\"unavailable\",\"message\":\"trading calendar unavailable\"}\n",
-			wantLog:    "{\"level\":\"ERROR\",\"msg\":\"market status: load calendar failed\",\"error\":\"connection refused\"}\n",
+			wantLog:    "{\"level\":\"ERROR\",\"msg\":\"market status: load calendar failed\",\"error\":\"connection refused\",\"request_id\":\"req-1\"}\n",
 		},
 	}
 	for _, tt := range tests {
@@ -104,8 +104,10 @@ func TestMarketStatus(t *testing.T) {
 			var logs bytes.Buffer
 			router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, tt.cals, at(tt.now))
 			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
+			req.Header.Set("X-Request-Id", "req-1")
 
-			router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil))
+			router.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
@@ -128,9 +130,11 @@ func TestMarketStatusTimesOutLoad(t *testing.T) {
 	called := make(chan time.Duration, 1)
 	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday))
 	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
+	req.Header.Set("X-Request-Id", "req-1")
 
 	start := time.Now()
-	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil))
+	router.ServeHTTP(rec, req)
 	elapsed := time.Since(start)
 
 	if left := <-called; left < 1900*time.Millisecond || left > 2*time.Second {
@@ -145,7 +149,7 @@ func TestMarketStatusTimesOutLoad(t *testing.T) {
 	if got, want := rec.Body.String(), "{\"code\":\"unavailable\",\"message\":\"trading calendar unavailable\"}\n"; got != want {
 		t.Errorf("body = %q, want %q", got, want)
 	}
-	if got, want := logs.String(), "{\"level\":\"ERROR\",\"msg\":\"market status: load calendar failed\",\"error\":\"context deadline exceeded\"}\n"; got != want {
+	if got, want := logs.String(), "{\"level\":\"ERROR\",\"msg\":\"market status: load calendar failed\",\"error\":\"context deadline exceeded\",\"request_id\":\"req-1\"}\n"; got != want {
 		t.Errorf("logs = %q, want %q", got, want)
 	}
 }

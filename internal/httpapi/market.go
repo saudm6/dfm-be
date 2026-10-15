@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
@@ -27,7 +29,10 @@ func (s server) GetMarketStatus(ctx context.Context, _ gen.GetMarketStatusReques
 	if err != nil {
 		// A client that went away is not a server fault.
 		if ctx.Err() == nil {
-			s.logger.LogAttrs(ctx, slog.LevelError, "market status: load calendar failed", slog.String("error", err.Error()))
+			s.logger.LogAttrs(ctx, slog.LevelError, "market status: load calendar failed",
+				slog.String("error", err.Error()),
+				slog.String("request_id", middleware.GetReqID(ctx)),
+			)
 		}
 		return gen.GetMarketStatus503JSONResponse{Code: "unavailable", Message: "trading calendar unavailable"}, nil
 	}
