@@ -4,9 +4,15 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/httpapi/paramtest"
 )
+
+// NewBaseRouter lets tests mount their own handlers behind the router's
+// middleware.
+func NewBaseRouter(logger *slog.Logger) *chi.Mux { return newBaseRouter(logger) }
 
 // NewRouterWithServer lets tests serve the contract with a fake implementation.
 var NewRouterWithServer = newRouter

@@ -160,10 +160,20 @@ func operations(doc *openapi3.T) []operation {
 // publicOperationProblems checks doc against public, the IDs of the
 // operations the auth middleware serves without a session. A listed
 // operation must exist and declare `security: []`; every other operation
-// must require sessionCookie in each of its security requirements.
+// must require sessionCookie in each of its security requirements, and its
+// path must not equal a public operation's path once a trailing "/" is
+// trimmed from both, because chi's RoutePattern() trims it and /x/ would
+// then pass for /x.
 func publicOperationProblems(doc *openapi3.T, public []string) []string {
 	var problems []string
 	seen := map[string]bool{}
+	publicPaths := map[string]string{}
+	for _, op := range operations(doc) {
+		if slices.Contains(public, op.id) {
+			_, path, _ := strings.Cut(op.key, " ")
+			publicPaths[strings.TrimSuffix(path, "/")] = path
+		}
+	}
 	for _, op := range operations(doc) {
 		if slices.Contains(public, op.id) {
 			seen[op.id] = true
@@ -171,6 +181,10 @@ func publicOperationProblems(doc *openapi3.T, public []string) []string {
 				problems = append(problems, fmt.Sprintf("%s (%s) is public but has security %v, want []", op.key, op.id, op.security))
 			}
 			continue
+		}
+		_, path, _ := strings.Cut(op.key, " ")
+		if pub, ok := publicPaths[strings.TrimSuffix(path, "/")]; ok && pub != path {
+			problems = append(problems, fmt.Sprintf("%s (%s) is not public but its path differs from public path %s only by a trailing \"/\"", op.key, op.id, pub))
 		}
 		if len(op.security) == 0 {
 			problems = append(problems, fmt.Sprintf("%s (%s) has no security requirement but is not public", op.key, op.id))
@@ -212,6 +226,8 @@ paths:
   /me:
     get: {operationId: getMe, responses: {"204": {description: ok}}}
     post: {operationId: postMe, security: [{sessionCookie: [], csrfToken: []}], responses: {"204": {description: ok}}}
+  /login/:
+    post: {operationId: postLoginSlash, security: [{sessionCookie: [], csrfToken: []}], responses: {"204": {description: ok}}}
   /scratch:
     get: {operationId: getScratch, security: [{}], responses: {"204": {description: ok}}}
     post: {operationId: postScratch, security: [{csrfToken: []}], responses: {"204": {description: ok}}}
@@ -230,6 +246,7 @@ components:
 	want := []string{
 		"GET /me (getMe) is public but has security [map[sessionCookie:[]]], want []",
 		"GET /scratch (getScratch) has security requirement map[] without sessionCookie but is not public",
+		"POST /login/ (postLoginSlash) is not public but its path differs from public path /login only by a trailing \"/\"",
 		"POST /scratch (postScratch) has security requirement map[csrfToken:[]] without sessionCookie but is not public",
 		"PUT /scratch (putScratch) has no security requirement but is not public",
 		"public operation gone is not in the spec",

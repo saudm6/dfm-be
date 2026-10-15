@@ -31,6 +31,7 @@ import (
 	"github.com/saudm6/dfm-be/internal/domain"
 	"github.com/saudm6/dfm-be/internal/httpapi"
 	"github.com/saudm6/dfm-be/internal/store"
+	"github.com/saudm6/dfm-be/internal/ws"
 )
 
 const (
@@ -210,12 +211,13 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
+	gateway := ws.New(logger, ws.Topics, ws.Options{})
 	srv := &http.Server{
 		Handler: httpapi.NewRouter(logger, pool, calendar.Loader{DB: pool, Hours: cfg.Market.Hours()}, clock, auth.NewService(pool, auth.Options{
 			IdleTimeout:    cfg.SessionIdleTimeout,
 			MaxAge:         cfg.SessionMaxAge,
 			InsecureCookie: !cfg.CookieSecure,
-		})),
+		}), gateway),
 		ReadHeaderTimeout: 10 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
@@ -232,7 +234,11 @@ func serve(ctx context.Context, environ []string, stdout io.Writer) error {
 	logger.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	// Shutdown does not wait for hijacked connections, so the gateway
+	// closes its WebSockets itself.
+	err = srv.Shutdown(shutdownCtx)
+	gateway.Close()
+	if err != nil {
 		return fmt.Errorf("shut down http server: %w", err)
 	}
 	return nil

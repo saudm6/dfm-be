@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-chi/chi/v5"
@@ -97,7 +98,9 @@ func me(sess auth.Session) gen.Me {
 func requireAuth(logger *slog.Logger, sessions *auth.Service, sessionKey any, public map[string]bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if public[r.Method+" "+chi.RouteContext(r.Context()).RoutePattern()] {
+			// RoutePattern() trims a trailing "/", which would make /x/ as
+			// public as /x; the joined patterns keep it.
+			if public[r.Method+" "+strings.Join(chi.RouteContext(r.Context()).RoutePatterns, "")] {
 				next.ServeHTTP(w, r)
 				return
 			}

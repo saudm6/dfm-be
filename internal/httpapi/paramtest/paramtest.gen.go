@@ -84,6 +84,9 @@ type ServerInterface interface {
 	// (POST /orders)
 	PlaceOrder(w http.ResponseWriter, r *http.Request)
 
+	// (POST /orders/)
+	PlaceOrderTrailingSlash(w http.ResponseWriter, r *http.Request)
+
 	// (GET /quotes)
 	ListQuotes(w http.ResponseWriter, r *http.Request)
 
@@ -110,6 +113,11 @@ func (_ Unimplemented) PostMessage(w http.ResponseWriter, r *http.Request) {
 
 // (POST /orders)
 func (_ Unimplemented) PlaceOrder(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /orders/)
+func (_ Unimplemented) PlaceOrderTrailingSlash(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -245,6 +253,20 @@ func (siw *ServerInterfaceWrapper) PlaceOrder(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PlaceOrder(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PlaceOrderTrailingSlash operation middleware
+func (siw *ServerInterfaceWrapper) PlaceOrderTrailingSlash(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PlaceOrderTrailingSlash(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -428,6 +450,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/orders", wrapper.PlaceOrder)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/", wrapper.PlaceOrderTrailingSlash)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/quotes", wrapper.ListQuotes)
 	})
 	r.Group(func(r chi.Router) {
@@ -556,6 +581,38 @@ func (response PlaceOrderdefaultJSONResponse) VisitPlaceOrderResponse(w http.Res
 	return err
 }
 
+type PlaceOrderTrailingSlashRequestObject struct {
+}
+
+type PlaceOrderTrailingSlashResponseObject interface {
+	VisitPlaceOrderTrailingSlashResponse(w http.ResponseWriter) error
+}
+
+type PlaceOrderTrailingSlash204Response struct {
+}
+
+func (response PlaceOrderTrailingSlash204Response) VisitPlaceOrderTrailingSlashResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PlaceOrderTrailingSlashdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response PlaceOrderTrailingSlashdefaultJSONResponse) VisitPlaceOrderTrailingSlashResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListQuotesRequestObject struct {
 }
 
@@ -663,6 +720,9 @@ type StrictServerInterface interface {
 
 	// (POST /orders)
 	PlaceOrder(ctx context.Context, request PlaceOrderRequestObject) (PlaceOrderResponseObject, error)
+
+	// (POST /orders/)
+	PlaceOrderTrailingSlash(ctx context.Context, request PlaceOrderTrailingSlashRequestObject) (PlaceOrderTrailingSlashResponseObject, error)
 
 	// (GET /quotes)
 	ListQuotes(ctx context.Context, request ListQuotesRequestObject) (ListQuotesResponseObject, error)
@@ -788,6 +848,30 @@ func (sh *strictHandler) PlaceOrder(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PlaceOrderResponseObject); ok {
 		if err := validResponse.VisitPlaceOrderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PlaceOrderTrailingSlash operation middleware
+func (sh *strictHandler) PlaceOrderTrailingSlash(w http.ResponseWriter, r *http.Request) {
+	var request PlaceOrderTrailingSlashRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PlaceOrderTrailingSlash(ctx, request.(PlaceOrderTrailingSlashRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PlaceOrderTrailingSlash")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PlaceOrderTrailingSlashResponseObject); ok {
+		if err := validResponse.VisitPlaceOrderTrailingSlashResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

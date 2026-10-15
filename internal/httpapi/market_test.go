@@ -104,7 +104,7 @@ func TestMarketStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var logs bytes.Buffer
-			router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, tt.cals, at(tt.now), f.sessions)
+			router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, tt.cals, at(tt.now), f.sessions, nil)
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
 			req.Header.Set("X-Request-Id", "req-1")
@@ -130,7 +130,7 @@ func TestMarketStatus(t *testing.T) {
 
 func TestMarketStatusNeedsSession(t *testing.T) {
 	f := newAuthFixture(t)
-	router := httpapi.NewRouter(errorLogger(&bytes.Buffer{}), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions)
+	router := httpapi.NewRouter(errorLogger(&bytes.Buffer{}), fakeDB{}, fakeCalendars{}, at(thursday), f.sessions, nil)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil))
@@ -144,7 +144,7 @@ func TestMarketStatusTimesOutLoad(t *testing.T) {
 	f := newAuthFixture(t)
 	var logs bytes.Buffer
 	called := make(chan time.Duration, 1)
-	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday), f.sessions)
+	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday), f.sessions, nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
 	req.Header.Set("X-Request-Id", "req-1")
@@ -175,7 +175,7 @@ func TestMarketStatusClientCancelIsNotAnError(t *testing.T) {
 	f := newAuthFixture(t)
 	var logs bytes.Buffer
 	called := make(chan time.Duration, 1)
-	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday), f.sessions)
+	router := httpapi.NewRouter(errorLogger(&logs), fakeDB{}, hangingCalendars{called: called}, at(thursday), f.sessions, nil)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/market/status", nil)
 	req.AddCookie(signIn(t, router))
 	ctx, cancel := context.WithCancel(t.Context())
