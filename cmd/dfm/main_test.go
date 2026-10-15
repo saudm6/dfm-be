@@ -104,8 +104,8 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
-	if resp.StatusCode != http.StatusOK || string(body) != `{"status":"ok","db":"ok"}` {
-		t.Errorf("GET /healthz = %d %s, want 200 {\"status\":\"ok\",\"db\":\"ok\"}", resp.StatusCode, body)
+	if want := "{\"status\":\"ok\",\"db\":\"ok\"}\n"; resp.StatusCode != http.StatusOK || string(body) != want {
+		t.Errorf("GET /healthz = %d %q, want 200 %q", resp.StatusCode, body, want)
 	}
 
 	cancel()

@@ -1,0 +1,10 @@
+# oapi-codegen settings for the server in internal/httpapi/gen.
+# Regenerate with `go generate ./...` (or `make generate`) from the repo root.
+package: gen
+output: gen/server.gen.go
+generate:
+  models: true
+  chi-server: true
+  strict-server: true
+output-options:
+  skip-prune: true

@@ -32,3 +32,21 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test -race ./...
+
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Regenerate code from api/openapi.yaml
+        run: go generate ./...
+      - name: Fail if the committed output differs
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            git diff
+            echo "::error::Generated code is out of date with api/openapi.yaml. Run 'go generate ./...' and commit the result."
+            exit 1
+          fi
