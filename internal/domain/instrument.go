@@ -6,7 +6,8 @@ import (
 )
 
 // InstrumentClass is the kind of security, following the groups in DFM's
-// securities list.
+// securities list. ClassIndex is a DFM index, such as the DFM General Index,
+// listed so that charts and the heat map can refer to it.
 type InstrumentClass string
 
 // Instrument classes.
@@ -18,6 +19,7 @@ const (
 	ClassBond   InstrumentClass = "bond"
 	ClassSukuk  InstrumentClass = "sukuk"
 	ClassFuture InstrumentClass = "future"
+	ClassIndex  InstrumentClass = "index"
 )
 
 // ParseInstrumentClass returns the InstrumentClass named s.
@@ -28,7 +30,7 @@ func ParseInstrumentClass(s string) (InstrumentClass, error) {
 // Valid reports whether c is a known instrument class.
 func (c InstrumentClass) Valid() bool {
 	switch c {
-	case ClassEquity, ClassETF, ClassREIT, ClassFund, ClassBond, ClassSukuk, ClassFuture:
+	case ClassEquity, ClassETF, ClassREIT, ClassFund, ClassBond, ClassSukuk, ClassFuture, ClassIndex:
 		return true
 	}
 	return false

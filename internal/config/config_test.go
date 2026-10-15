@@ -37,6 +37,7 @@ func TestLoad(t *testing.T) {
 				Session:  config.Session{SessionIdleTimeout: 12 * time.Hour, SessionMaxAge: 168 * time.Hour, CookieSecure: true},
 				Base:     config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
 				Market:   defaultMarket,
+				DFM:      config.DFM{APIBaseURL: "https://api2.dfm.ae"},
 			},
 		},
 		{
@@ -46,6 +47,7 @@ func TestLoad(t *testing.T) {
 				"DFM_SESSION_IDLE_TIMEOUT=30m", "DFM_SESSION_MAX_AGE=24h", "DFM_COOKIE_SECURE=false",
 				"DFM_SESSION_PRE_OPEN=09:00", "DFM_SESSION_OPEN=09:30", "DFM_SESSION_CLOSING_AUCTION=13:45",
 				"DFM_SESSION_CLOSE=14:00", "DFM_TRADING_DAYS=Sun,Mon,Tue,Wed,Thu",
+				"DFM_API_BASE_URL=http://127.0.0.1:9001",
 			},
 			want: config.Config{
 				HTTPAddr: "127.0.0.1:9000",
@@ -61,6 +63,7 @@ func TestLoad(t *testing.T) {
 						calendar.Weekday(time.Wednesday), calendar.Weekday(time.Thursday),
 					},
 				},
+				DFM: config.DFM{APIBaseURL: "http://127.0.0.1:9001"},
 			},
 		},
 	}
@@ -177,6 +180,52 @@ func TestLoadBase(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("LoadBase() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadSync(t *testing.T) {
+	tests := []struct {
+		name    string
+		environ []string
+		want    config.Sync
+		wantErr string
+	}{
+		{
+			name:    "defaults",
+			environ: []string{"DFM_DATABASE_URL=" + dbURL},
+			want: config.Sync{
+				Base: config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
+				DFM:  config.DFM{APIBaseURL: "https://api2.dfm.ae"},
+			},
+		},
+		{
+			name:    "API base URL set",
+			environ: []string{"DFM_DATABASE_URL=" + dbURL, "DFM_API_BASE_URL=http://127.0.0.1:9001"},
+			want: config.Sync{
+				Base: config.Base{LogLevel: slog.LevelInfo, DatabaseURL: dbURL},
+				DFM:  config.DFM{APIBaseURL: "http://127.0.0.1:9001"},
+			},
+		},
+		{
+			name:    "missing database url",
+			environ: nil,
+			wantErr: `config: env: required environment variable "DFM_DATABASE_URL" is not set`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := config.LoadSync(tt.environ)
+			gotErr := ""
+			if err != nil {
+				gotErr = err.Error()
+			}
+			if gotErr != tt.wantErr {
+				t.Fatalf("LoadSync() error = %q, want %q", gotErr, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("LoadSync() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
