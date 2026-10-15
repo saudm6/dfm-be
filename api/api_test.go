@@ -10,6 +10,7 @@ import (
 
 	"github.com/saudm6/dfm-be/api"
 	"github.com/saudm6/dfm-be/internal/auth"
+	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/domain"
 )
 
@@ -49,6 +50,7 @@ func TestSpecEnumsMatchDomain(t *testing.T) {
 		{"InstrumentClass", []string{"equity", "etf", "reit", "fund", "bond", "sukuk", "future"}, parser(domain.ParseInstrumentClass)},
 		{"InstrumentStatus", []string{"listed", "suspended", "delisted", "matured"}, parser(domain.ParseInstrumentStatus)},
 		{"Role", []string{"owner", "member"}, parser(auth.ParseRole)},
+		{"MarketSession", []string{"pre-open", "continuous", "closing-auction", "closed"}, parser(calendar.ParseSession)},
 	}
 	schemas := loadSpec(t).Components.Schemas
 	for _, tt := range tests {

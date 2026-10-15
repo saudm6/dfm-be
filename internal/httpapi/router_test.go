@@ -21,6 +21,10 @@ type fakeDB struct{ err error }
 
 func (f fakeDB) Ping(context.Context) error { return f.err }
 
+func newRouter(logger *slog.Logger, db fakeDB) http.Handler {
+	return httpapi.NewRouter(logger, db, fakeCalendars{}, at(thursday), nil)
+}
+
 func TestRouter(t *testing.T) {
 	spec, err := os.ReadFile("../../api/openapi.yaml")
 	if err != nil {
@@ -81,7 +85,7 @@ func TestRouter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := httpapi.NewRouter(slog.New(slog.DiscardHandler), tt.db, nil)
+			router := newRouter(slog.New(slog.DiscardHandler), tt.db)
 			rec := httptest.NewRecorder()
 
 			router.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, nil))
@@ -107,7 +111,7 @@ func TestRouterServesSpecWithLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(httpapi.NewRouter(slog.New(slog.DiscardHandler), fakeDB{}, nil))
+	srv := httptest.NewServer(newRouter(slog.New(slog.DiscardHandler), fakeDB{}))
 	defer srv.Close()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/openapi.yaml", nil)
 	if err != nil {
@@ -169,7 +173,7 @@ func TestRouterHandlerErrorSendsErrorBody(t *testing.T) {
 
 func TestRouterLogsEachRequest(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{}, nil)
+	router := newRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{})
 
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz?probe=1", nil))
 
@@ -210,7 +214,7 @@ func TestRouterLogsEachRequest(t *testing.T) {
 
 func TestHealthzLogsDatabaseError(t *testing.T) {
 	var logs bytes.Buffer
-	router := httpapi.NewRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{err: errors.New("connection refused")}, nil)
+	router := newRouter(slog.New(slog.NewJSONHandler(&logs, nil)), fakeDB{err: errors.New("connection refused")})
 
 	router.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
 

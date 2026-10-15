@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/shopspring/decimal"
@@ -24,6 +25,8 @@ import (
 type server struct {
 	logger   *slog.Logger
 	db       Pinger
+	cals     CalendarLoader
+	now      func() time.Time
 	sessions *auth.Service
 }
 

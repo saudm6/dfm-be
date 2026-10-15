@@ -216,6 +216,29 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /market/status:
+    get:
+      operationId: getMarketStatus
+      summary: Report the DFM session now and when continuous trading next opens
+      tags: [foundation]
+      responses:
+        "200":
+          description: The current session and the next open, from the trading calendar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketStatus"
+              example: {session: closed, nextOpen: "2026-10-19T10:00:00+04:00"}
+        "503":
+          description: The trading calendar could not be loaded within 2 seconds.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: {code: unavailable, message: trading calendar unavailable}
+        default:
+          $ref: "#/components/responses/Error"
+
   # ==========================================================================
   # security-master (F01)
   # ==========================================================================
@@ -324,7 +347,8 @@ components:
             Stable machine-readable reason in snake_case. Clients branch on
             this, never on message. Known codes: bad_request, unauthorized,
             forbidden, not_found, method_not_allowed, conflict,
-            unsupported_media_type, internal.
+            unsupported_media_type, internal, unavailable (a dependency such
+            as the database did not answer; retry later).
           examples: [not_found]
         message:
           type: string
@@ -624,6 +648,35 @@ components:
           description: Send in the X-CSRF-Token header on POST, PUT, PATCH, and DELETE.
           x-go-name: CSRFToken
           x-order: 4
+
+    MarketSession:
+      type: string
+      description: |
+        The phase of the DFM trading day in Asia/Dubai: pre-open from 09:30,
+        continuous from 10:00, closing-auction from 14:45 (DFM's pre-closing
+        and trade-at-last sessions), and closed from 15:00 and on days DFM
+        does not trade. The times are the defaults; the server's config sets
+        them.
+      enum: [pre-open, continuous, closing-auction, closed]
+      x-go-type: calendar.Session
+      x-go-type-import:
+        path: github.com/saudm6/dfm-be/internal/calendar
+
+    MarketStatus:
+      type: object
+      required: [session, nextOpen]
+      properties:
+        session:
+          $ref: "#/components/schemas/MarketSession"
+          x-order: 1
+        nextOpen:
+          type: string
+          format: date-time
+          x-order: 2
+          description: |
+            The next start of continuous trading strictly after now, in
+            +04:00. This is the continuous open, not the pre-open.
+          examples: ["2026-10-19T10:00:00+04:00"]
 
     # ==========================================================================
     # security-master (F01)

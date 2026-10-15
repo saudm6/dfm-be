@@ -13,6 +13,12 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type Holiday struct {
+	Day    pgtype.Date
+	Reason string
+	Kind   string
+}
+
 type Order struct {
 	ClientOrderID     uuid.UUID
 	Symbol            domain.Symbol

@@ -21,10 +21,11 @@ import (
 // NewRouter returns the handler for every HTTP route of the service.
 // Each request gets a request ID and is logged to logger when it completes.
 // db is the service database; /healthz reports whether it answers.
+// /market/status reports the DFM session at now from the calendar cals loads.
 // sessions signs users in and out; every operation of api/openapi.yaml except
 // those in api.PublicOperations needs one of its sessions.
-func NewRouter(logger *slog.Logger, db Pinger, sessions *auth.Service) http.Handler {
-	return newRouter(logger, server{logger: logger, db: db, sessions: sessions}, sessions)
+func NewRouter(logger *slog.Logger, db Pinger, cals CalendarLoader, now func() time.Time, sessions *auth.Service) http.Handler {
+	return newRouter(logger, server{logger: logger, db: db, cals: cals, now: now, sessions: sessions}, sessions)
 }
 
 // newRouter serves the operations of api/openapi.yaml with ssi.

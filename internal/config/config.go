@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+
+	"github.com/saudm6/dfm-be/internal/calendar"
 )
 
 // Config is the configuration of the server. It is parsed once at startup.
@@ -16,6 +18,29 @@ type Config struct {
 	HTTPAddr string `env:"DFM_HTTP_ADDR,required,notEmpty"`
 	Session
 	Base
+	Market Market
+}
+
+// Market is the DFM trading day in Asia/Dubai time. The defaults are the
+// session times dfm.ae publishes: pre-opening 09:30, trading 10:00,
+// pre-closing 14:45, trade at last 14:55 to the 15:00 close, Monday to
+// Friday.
+type Market struct {
+	PreOpen        calendar.TimeOfDay `env:"DFM_SESSION_PRE_OPEN" envDefault:"09:30"`
+	Open           calendar.TimeOfDay `env:"DFM_SESSION_OPEN" envDefault:"10:00"`
+	ClosingAuction calendar.TimeOfDay `env:"DFM_SESSION_CLOSING_AUCTION" envDefault:"14:45"`
+	Close          calendar.TimeOfDay `env:"DFM_SESSION_CLOSE" envDefault:"15:00"`
+	// TradingDays lists the days of the trading week, comma-separated.
+	TradingDays []calendar.Weekday `env:"DFM_TRADING_DAYS" envDefault:"Mon,Tue,Wed,Thu,Fri"`
+}
+
+// Hours returns m as calendar hours.
+func (m Market) Hours() calendar.Hours {
+	week := make([]time.Weekday, len(m.TradingDays))
+	for i, d := range m.TradingDays {
+		week[i] = time.Weekday(d)
+	}
+	return calendar.Hours{PreOpen: m.PreOpen, Open: m.Open, ClosingAuction: m.ClosingAuction, Close: m.Close, Week: week}
 }
 
 // Session configures sign-in sessions.
@@ -41,7 +66,7 @@ type Base struct {
 
 // Load parses the server configuration from environ, given as "KEY=value"
 // pairs like os.Environ returns. A missing or empty required variable fails
-// with an error that names it.
+// with an error that names it, and so do session times out of order.
 func Load(environ []string) (Config, error) {
 	cfg, err := parse[Config](environ)
 	if err != nil {
@@ -49,6 +74,9 @@ func Load(environ []string) (Config, error) {
 	}
 	if cfg.SessionIdleTimeout <= 0 || cfg.SessionMaxAge <= 0 {
 		return Config{}, errors.New("config: DFM_SESSION_IDLE_TIMEOUT and DFM_SESSION_MAX_AGE must be positive")
+	}
+	if err := cfg.Market.Hours().Validate(); err != nil {
+		return Config{}, fmt.Errorf("config: %w", err)
 	}
 	return cfg, nil
 }
