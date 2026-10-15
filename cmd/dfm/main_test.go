@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/calendar"
 	"github.com/saudm6/dfm-be/internal/config"
 	"github.com/saudm6/dfm-be/internal/domain"
@@ -45,6 +47,36 @@ func TestRunErrors(t *testing.T) {
 			args:    []string{"seed"},
 			environ: nil,
 			wantErr: usage,
+		},
+		{
+			name:    "user create without role",
+			args:    []string{"user", "create", "--username", "saud"},
+			environ: nil,
+			wantErr: `--role must be owner or member, not ""`,
+		},
+		{
+			name:    "user create with unknown role",
+			args:    []string{"user", "create", "--username", "saud", "--role", "admin"},
+			environ: nil,
+			wantErr: `--role must be owner or member, not "admin"`,
+		},
+		{
+			name:    "user create with bad username",
+			args:    []string{"user", "create", "--username", "saud m", "--role", "owner"},
+			environ: nil,
+			wantErr: `auth: username "saud m" must be 1 to 64 characters of a-z, 0-9, '.', '_' and '-', starting with a letter or digit`,
+		},
+		{
+			name:    "user create with unknown flag",
+			args:    []string{"user", "create", "--admin"},
+			environ: nil,
+			wantErr: usage,
+		},
+		{
+			name:    "user create without database url",
+			args:    []string{"user", "create", "--username", "saud", "--role", "owner"},
+			environ: nil,
+			wantErr: `config: env: required environment variable "DFM_DATABASE_URL" is not set`,
 		},
 		{
 			name:    "calendar close without date",
@@ -91,7 +123,7 @@ func TestRunErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := run(t.Context(), tt.args, tt.environ, io.Discard)
+			err := run(t.Context(), tt.args, tt.environ, strings.NewReader(""), io.Discard)
 
 			if err == nil || err.Error() != tt.wantErr {
 				t.Fatalf("run() error = %v, want %q", err, tt.wantErr)
@@ -145,7 +177,7 @@ func TestRunMigrateIsIdempotent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		var logs bytes.Buffer
-		if err := run(t.Context(), []string{"migrate"}, environ, &logs); err != nil {
+		if err := run(t.Context(), []string{"migrate"}, environ, strings.NewReader(""), &logs); err != nil {
 			t.Fatalf("%s: run(migrate) error = %v", tt.name, err)
 		}
 		var line struct {
@@ -164,7 +196,7 @@ func TestRunMigrateIsIdempotent(t *testing.T) {
 func TestRunCalendarClose(t *testing.T) {
 	url := storetest.NewURL(t)
 	environ := []string{"DFM_DATABASE_URL=" + url}
-	if err := run(t.Context(), []string{"migrate"}, environ, io.Discard); err != nil {
+	if err := run(t.Context(), []string{"migrate"}, environ, strings.NewReader(""), io.Discard); err != nil {
 		t.Fatalf("run(migrate) error = %v", err)
 	}
 	tests := []struct {
@@ -178,7 +210,7 @@ func TestRunCalendarClose(t *testing.T) {
 	}
 	for _, tt := range tests {
 		var logs bytes.Buffer
-		if err := run(t.Context(), tt.args, environ, &logs); err != nil {
+		if err := run(t.Context(), tt.args, environ, strings.NewReader(""), &logs); err != nil {
 			t.Fatalf("%s: run(%v) error = %v", tt.name, tt.args, err)
 		}
 		var line struct {
@@ -215,11 +247,12 @@ func TestRunCalendarClose(t *testing.T) {
 func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	environ := []string{"DFM_HTTP_ADDR=127.0.0.1:0", "DFM_DATABASE_URL=" + storetest.NewURL(t)}
+	dbURL := storetest.NewURL(t)
+	environ := []string{"DFM_HTTP_ADDR=127.0.0.1:0", "DFM_DATABASE_URL=" + dbURL}
 	logs, logw := io.Pipe()
 	done := make(chan error, 1)
 	go func() {
-		err := run(ctx, nil, environ, logw)
+		err := run(ctx, nil, environ, strings.NewReader(""), logw)
 		_ = logw.Close()
 		done <- err
 	}()
@@ -232,8 +265,12 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 		t.Errorf("GET /healthz = %d %q, want 200 %q", status, body, want)
 	}
 
+	if status, body := get(ctx, t, "http://"+addr+"/market/status"); status != http.StatusUnauthorized {
+		t.Errorf("GET /market/status signed out = %d %q, want 401", status, body)
+	}
+	session := signIn(ctx, t, "http://"+addr, dbURL)
 	before := time.Now()
-	status, body = get(ctx, t, "http://"+addr+"/market/status")
+	status, body = get(ctx, t, "http://"+addr+"/market/status", session)
 	var market struct {
 		Session  string    `json:"session"`
 		NextOpen time.Time `json:"nextOpen"`
@@ -254,11 +291,45 @@ func TestRunServesHealthzUntilCancelled(t *testing.T) {
 	}
 }
 
-func get(ctx context.Context, t *testing.T, url string) (status int, body string) {
+// signIn adds the member amal to the database at dbURL and signs her in
+// through the server at base. It returns her session cookie.
+func signIn(ctx context.Context, t *testing.T, base, dbURL string) *http.Cookie {
+	t.Helper()
+	pool, err := store.Open(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := auth.NewService(pool, auth.Options{}).CreateUser(ctx, "amal", "correct horse battery", auth.Member); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/auth/login",
+		strings.NewReader(`{"username":"amal","password":"correct horse battery"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /auth/login: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	cookies := resp.Cookies()
+	if resp.StatusCode != http.StatusOK || len(cookies) != 1 {
+		t.Fatalf("POST /auth/login = %d with %d cookies, want 200 with the session cookie", resp.StatusCode, len(cookies))
+	}
+	return &http.Cookie{Name: cookies[0].Name, Value: cookies[0].Value}
+}
+
+// get sends GET url with cookies and returns the response status and body.
+func get(ctx context.Context, t *testing.T, url string, cookies ...*http.Cookie) (status int, body string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, c := range cookies {
+		req.AddCookie(c)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -299,5 +370,53 @@ func listenAddr(t *testing.T, logs io.Reader) string {
 			}
 			return line.Addr
 		}
+	}
+}
+
+func TestRunUserCreateSeedsAccountThatCanSignIn(t *testing.T) {
+	dbURL := storetest.NewURL(t)
+	environ := []string{"DFM_DATABASE_URL=" + dbURL}
+	var logs bytes.Buffer
+
+	err := run(t.Context(), []string{"user", "create", "--role", "owner", "--username", "Saud"}, environ,
+		strings.NewReader("correct horse battery\r\n"), &logs)
+
+	if err != nil {
+		t.Fatalf("run(user create) error = %v", err)
+	}
+	dec := json.NewDecoder(&logs)
+	var line struct {
+		Msg      string `json:"msg"`
+		ID       int64  `json:"id"`
+		Username string `json:"username"`
+		Role     string `json:"role"`
+	}
+	for line.Msg != "user created" {
+		if err := dec.Decode(&line); err != nil {
+			t.Fatalf("no \"user created\" log line: %v", err)
+		}
+	}
+	if line.ID != 1 || line.Username != "saud" || line.Role != "owner" {
+		t.Errorf("log = %+v, want id 1, username saud, role owner", line)
+	}
+
+	pool, err := store.Open(t.Context(), dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	sess, _, err := auth.NewService(pool, auth.Options{IdleTimeout: time.Hour, MaxAge: time.Hour}).
+		Login(t.Context(), "saud", "correct horse battery", "")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if want := (auth.User{ID: 1, Username: "saud", Role: auth.Owner}); sess.User != want {
+		t.Errorf("Login() user = %+v, want %+v", sess.User, want)
+	}
+
+	err = run(t.Context(), []string{"user", "create", "--role", "member", "--username", "saud"}, environ,
+		strings.NewReader("another password\n"), io.Discard)
+	if err == nil || err.Error() != "auth: username is taken: saud" {
+		t.Errorf("second run(user create) error = %v, want %q", err, "auth: username is taken: saud")
 	}
 }

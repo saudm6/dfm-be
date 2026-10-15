@@ -13,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/saudm6/dfm-be/api"
+	"github.com/saudm6/dfm-be/internal/auth"
 	"github.com/saudm6/dfm-be/internal/httpapi/gen"
 )
 
@@ -20,23 +22,29 @@ import (
 // Each request gets a request ID and is logged to logger when it completes.
 // db is the service database; /healthz reports whether it answers.
 // /market/status reports the DFM session at now from the calendar cals loads.
-func NewRouter(logger *slog.Logger, db Pinger, cals CalendarLoader, now func() time.Time) http.Handler {
-	return newRouter(logger, server{logger: logger, db: db, cals: cals, now: now})
+// sessions signs users in and out; every operation of api/openapi.yaml except
+// those in api.PublicOperations needs one of its sessions.
+func NewRouter(logger *slog.Logger, db Pinger, cals CalendarLoader, now func() time.Time, sessions *auth.Service) http.Handler {
+	return newRouter(logger, server{logger: logger, db: db, cals: cals, now: now, sessions: sessions}, sessions)
 }
 
 // newRouter serves the operations of api/openapi.yaml with ssi.
-func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface) http.Handler {
+func newRouter(logger *slog.Logger, ssi gen.StrictServerInterface, sessions *auth.Service) http.Handler {
 	r := newBaseRouter(logger)
 	h := gen.NewStrictHandlerWithOptions(ssi, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  bodyDecodeError,
 		ResponseErrorHandlerFunc: handlerError(logger),
 	})
-	gen.HandlerWithOptions(h, gen.ChiServerOptions{
+	gen.HandlerWithOptions(loginGuard{h}, gen.ChiServerOptions{
 		BaseRouter:       r,
+		Middlewares:      []gen.MiddlewareFunc{requireAuth(logger, sessions, gen.SessionCookieScopes, apiPublicRoutes)},
 		ErrorHandlerFunc: paramBindError,
 	})
 	return r
 }
+
+// apiPublicRoutes are the routes of api.PublicOperations.
+var apiPublicRoutes = mustPublicRoutes(api.OpenAPI, api.PublicOperations)
 
 // newBaseRouter returns a router with the middleware and the JSON 404 and 405
 // answers, ready for the generated routes.

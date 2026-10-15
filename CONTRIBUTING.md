@@ -54,6 +54,39 @@ server. `binding_test.go` uses it to check path, query, and body binding
 through the real router setup. Extend it when you add a new kind of
 parameter.
 
+### Authentication and roles
+
+Every operation needs a signed-in session. The auth middleware fails closed:
+it serves an operation without a session only if its ID is in
+`api.PublicOperations` (today `getHealth`, `getOpenAPISpec`, `login`), and
+requires a session for every other operation whatever its `security` says.
+The spec's top-level `security` applies the `sessionCookie` scheme so the
+generated client sends the cookie.
+
+- To make an operation public, add its ID to `api.PublicOperations` and
+  declare `security: []` on it. `api.TestSpecPublicOperations` fails if a
+  listed operation declares any security, or if an unlisted operation has a
+  security requirement without `sessionCookie` (such as `[{}]` or
+  `[{csrfToken: []}]`).
+- Declare at most one security requirement object per operation
+  (`api.TestSpecSessionScopesAreKnown`): the generated code keeps only the
+  last object's `sessionCookie` scopes.
+- A POST, PUT, PATCH, or DELETE declares
+  `security: [{sessionCookie: [], csrfToken: []}]`. The middleware checks the
+  `X-CSRF-Token` header on those methods whatever the spec says;
+  `api.TestSpecUnsafeOperationsNeedCSRFToken` keeps the spec in step.
+- Market-data and trading operations (quotes, history, orders, positions)
+  add the `marketData` scope: `sessionCookie: [marketData]`. Only the
+  `owner` role has it; a `member` gets 403. Chat and layouts use no scope.
+  The middleware reads the scopes from the request context, where the
+  generated code puts them.
+- Responses that carry the CSRF token (POST /auth/login, GET /me) declare
+  the `NoStore` header and send `Cache-Control: no-store`.
+
+Handlers read the signed-in user with `auth.SessionFromContext(ctx)`. Code
+outside the generated routes, such as the `/ws` upgrade, calls
+`(*auth.Service).UserFromRequest(r)` and `auth.RequireMarketData(ctx)`.
+
 ### Errors
 
 Every non-2xx response carries the `Error` body: 400 `bad_request` for

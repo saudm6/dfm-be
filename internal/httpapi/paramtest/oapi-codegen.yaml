@@ -6,3 +6,7 @@ generate:
   strict-server: true
 output-options:
   skip-prune: true
+compatibility:
+  # Puts each operation's security requirements (sessionCookie, csrfToken and
+  # their scopes) on the request context, where the auth middleware reads them.
+  enable-auth-scopes-on-context: true

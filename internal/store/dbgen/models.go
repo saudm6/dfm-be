@@ -43,3 +43,20 @@ type OrderEvent struct {
 	RawMessage    pgtype.Text
 	RecordedAt    time.Time
 }
+
+type Session struct {
+	TokenHash         []byte
+	UserID            int64
+	CsrfToken         string
+	CreatedAt         time.Time
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
+}
+
+type User struct {
+	ID           int64
+	Username     string
+	PasswordHash string
+	Role         string
+	CreatedAt    time.Time
+}

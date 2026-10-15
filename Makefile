@@ -17,6 +17,8 @@ lint:
 	golangci-lint run
 
 run: export DFM_HTTP_ADDR ?= :8080
+# make run serves plain http, so the session cookie must not be Secure.
+run: export DFM_COOKIE_SECURE ?= false
 run migrate: export DFM_DATABASE_URL ?= $(LOCAL_DATABASE_URL)
 
 run:
