@@ -12,13 +12,14 @@ import (
 
 // NewRouter returns the handler for every HTTP route of the service.
 // Each request gets a request ID and is logged to logger when it completes.
-func NewRouter(logger *slog.Logger) http.Handler {
+// db is the service database; /healthz reports whether it answers.
+func NewRouter(logger *slog.Logger, db Pinger) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(logRequests(logger))
 	r.Use(middleware.Recoverer)
 
-	r.Get("/healthz", healthz)
+	r.Get("/healthz", healthz(logger, db))
 	return r
 }
 
